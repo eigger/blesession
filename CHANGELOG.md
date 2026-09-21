@@ -10,7 +10,7 @@ Report keys (`failed_stage`, `likely_cause`, `via`, `<stage>_s`, …) and the
 primary stage names are part of the contract: troubleshooting docs quote
 them, so any change to them is at least a minor bump and is listed here.
 
-## [Unreleased]
+## [0.1.0a2] — 2026-09-22
 
 ### Fixed
 
