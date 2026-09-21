@@ -10,6 +10,12 @@ Report keys (`failed_stage`, `likely_cause`, `via`, `<stage>_s`, …) and the
 primary stage names are part of the contract: troubleshooting docs quote
 them, so any change to them is at least a minor bump and is listed here.
 
+## [0.1.0] — 2026-09-22
+
+First release. Same code as 0.1.0a2, verified on device with `hass-ble-esl`
+0.10.0b1 over a Bluetooth proxy: `via` / `via_type` / `advertised_via`,
+`failed_stage` / `failed_detail` / `likely_cause` as designed.
+
 ## [0.1.0a2] — 2026-09-22
 
 ### Fixed

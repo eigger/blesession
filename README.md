@@ -11,8 +11,9 @@ likely means**, ready to publish as sensor attributes so a failed session at
 
 ## Status
 
-**0.0.1 — core written, no integration on it yet.** The library is tested
-without Home Assistant (`pytest`); the first adopter is `hass-ble-esl`.
+**0.1.0 — first release.** `hass-ble-esl` 0.10.0 runs on it, verified on
+device over a Bluetooth proxy; `hass-omron` is next. The library is tested
+without Home Assistant (`pytest`).
 Read [`docs/design.md`](docs/design.md) for what belongs here, what
 deliberately does not, how a Bluetooth-proxy route works without importing
 Home Assistant, and the rollout plan.
