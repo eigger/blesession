@@ -107,6 +107,30 @@ class SessionTrace:
             return None
         return self.failed_stage
 
+    def failure(self, exc: BaseException | None) -> tuple[str | None, str | None]:
+        """Where `exc` hit: (primary stage, detail), the trace first, then the error.
+
+        The one rule both report paths use. The trace is the authority on
+        the stage; an error that carries its own `stage` fills in only when
+        the trace timed none (an Unreachable raised before any stage ran).
+        An error's `detail` applies when it describes the same stage the
+        trace attributed the failure to (a ConnectFailed(detail="settle")
+        inside the `connect` stage) or when the trace has no stage at all;
+        a NotificationTimeout's step name inside a device stage is not a
+        stage detail and stays in the error text.
+        """
+        if exc is None:
+            return None, None
+        stage = self.failed_primary
+        detail = self.failed_detail
+        exc_stage = getattr(exc, "stage", None)
+        exc_detail = getattr(exc, "detail", None)
+        if stage is None:
+            return exc_stage, exc_detail
+        if detail is None and exc_stage == stage:
+            detail = exc_detail
+        return stage, detail
+
     # ── Facts ────────────────────────────────────────────────────────────
 
     def note(self, **facts: Any) -> None:

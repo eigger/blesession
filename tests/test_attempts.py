@@ -170,3 +170,19 @@ def test_success_report_is_short():
         **facts,
         "connect_s": trace.timings["connect"],
     }
+
+
+async def test_direct_report_and_attempt_report_agree_on_the_detail(no_sleep):
+    """A ConnectFailed(detail="settle") raised inside the connect stage keeps
+    its detail on both paths."""
+
+    async def attempt(a):
+        with a.trace.timed("connect"):
+            raise ConnectFailed("dropped in settle", detail="settle")
+
+    result = await run_attempts(attempt)
+    via_attempt = report_attempt(result, operation="write")
+    direct = build_report(operation="write", trace=result.trace, exc=result.error)
+    for report in (via_attempt, direct):
+        assert (report["failed_stage"], report["failed_detail"]) == ("connect", "settle")
+        assert "before encryption settled" in report["likely_cause"]

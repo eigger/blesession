@@ -1,6 +1,13 @@
 import pytest
 
-from blesession import SessionTrace, stages, traced
+from blesession import (
+    ConnectFailed,
+    NotificationTimeout,
+    SessionTrace,
+    Unreachable,
+    stages,
+    traced,
+)
 
 
 def test_timed_records_seconds_and_innermost_failure():
@@ -76,3 +83,30 @@ def test_record_adds_a_stage_measured_elsewhere():
     trace.record("connect", 0.25)
     trace.record("connect", 0.25)
     assert trace.timings == {"connect": 0.5}
+
+
+def test_failure_merges_trace_and_error():
+    """The trace names the stage; the error adds a detail only for that stage."""
+    # No stage timed: the error is all there is.
+    assert SessionTrace().failure(Unreachable("AA")) == ("unreachable", None)
+    assert SessionTrace().failure(RuntimeError("x")) == (None, None)
+    assert SessionTrace().failure(None) == (None, None)
+
+    # The error describes the stage the trace attributed the failure to.
+    trace = SessionTrace()
+    with pytest.raises(ConnectFailed):
+        with trace.timed("connect"):
+            raise ConnectFailed("dropped", detail="settle")
+    assert trace.failure(ConnectFailed("dropped", detail="settle")) == ("connect", "settle")
+
+    # A step name is not a stage detail; the device's own stage name wins.
+    trace = SessionTrace(stage_map={"handshake": stages.AUTH})
+    with pytest.raises(NotificationTimeout):
+        with trace.timed("handshake"):
+            raise NotificationTimeout(5, step="START")
+    assert trace.failure(NotificationTimeout(5, step="START")) == ("auth", "handshake")
+    trace = SessionTrace()
+    with pytest.raises(NotificationTimeout):
+        with trace.timed("transfer"):
+            raise NotificationTimeout(5, step="part 3/40")
+    assert trace.failure(NotificationTimeout(5, step="part 3/40")) == ("transfer", None)

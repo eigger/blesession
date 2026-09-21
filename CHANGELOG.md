@@ -10,6 +10,16 @@ Report keys (`failed_stage`, `likely_cause`, `via`, `<stage>_s`, …) and the
 primary stage names are part of the contract: troubleshooting docs quote
 them, so any change to them is at least a minor bump and is listed here.
 
+## [Unreleased]
+
+### Fixed
+
+- `build_report()` dropped an error's `detail` whenever the trace had a
+  failed stage, so a `ConnectFailed(detail="settle")` inside `connect` lost
+  it on the direct path while `report_attempt()` kept it. Both now use one
+  rule, `SessionTrace.failure(exc)`: the trace names the stage; the error's
+  detail applies when it is about that same stage or the trace has none.
+
 ## [0.1.0a1] — 2026-09-22
 
 Pre-release for on-device testing with `hass-ble-esl`. The API is what the

@@ -57,20 +57,12 @@ class Attempt[T]:
 
     @property
     def failed_stage(self) -> str | None:
-        """The primary stage the failure hit, from the trace or the error."""
-        if self.error is None:
-            return None
-        if (stage := self.trace.failed_primary) is not None:
-            return stage
-        return getattr(self.error, "stage", None)
+        """The primary stage the failure hit (see SessionTrace.failure)."""
+        return self.trace.failure(self.error)[0]
 
     @property
     def failed_detail(self) -> str | None:
-        if self.error is None:
-            return None
-        if (detail := self.trace.failed_detail) is not None:
-            return detail
-        return getattr(self.error, "detail", None)
+        return self.trace.failure(self.error)[1]
 
 
 type AttemptFn[T] = Callable[[Attempt[T]], Awaitable[T]]

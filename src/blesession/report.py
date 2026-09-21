@@ -45,19 +45,18 @@ def build_report(
         <stage>_s ...,                                                 # run order
         <trace facts> ...
 
-    `failed_stage` / `failed_detail` default to the trace's; pass them when
-    the error knows better (an Unreachable raised before any stage ran).
+    `failed_stage` / `failed_detail` default to `trace.failure(exc)` — the
+    trace first, then what the error itself carries; pass them to override.
     """
     facts = dict(facts or {})
     report: dict[str, Any] = {"operation": operation, "success": exc is None}
     if exc is not None:
         error = error_text(exc)
-        stage = failed_stage if failed_stage is not None else trace.failed_primary
-        if stage is None:
-            stage = getattr(exc, "stage", None)
-        detail = failed_detail if failed_detail is not None else trace.failed_detail
-        if detail is None and trace.failed_stage is None:
-            detail = getattr(exc, "detail", None)
+        stage, detail = trace.failure(exc)
+        if failed_stage is not None:
+            stage = failed_stage
+        if failed_detail is not None:
+            detail = failed_detail
         report["error"] = error
         if stage is not None:
             report["failed_stage"] = stage
@@ -111,6 +110,4 @@ def report_attempt(
         noun=noun,
         attempt=attempt.number,
         attempts=attempts,
-        failed_stage=attempt.failed_stage,
-        failed_detail=attempt.failed_detail,
     )
