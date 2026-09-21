@@ -10,7 +10,10 @@ Report keys (`failed_stage`, `likely_cause`, `via`, `<stage>_s`, …) and the
 primary stage names are part of the contract: troubleshooting docs quote
 them, so any change to them is at least a minor bump and is listed here.
 
-## [Unreleased]
+## [0.1.0a1] — 2026-09-22
+
+Pre-release for on-device testing with `hass-ble-esl`. The API is what the
+ESL integration shaped; `hass-omron` is next and may still move it.
 
 ### Added
 
@@ -36,3 +39,5 @@ them, so any change to them is at least a minor bump and is listed here.
 - `blesession.hass.radio_facts()`: `via`, `via_type`, `rssi`, `paths`,
   `advertised_via` as scanner names (imports Home Assistant lazily).
 - `blesession.testing`: `FakeClient`, `FakeDevice`, `fake_connect()`.
+- `SessionTrace.record()` for a stage measured elsewhere; `NotificationTimeout(message=)`
+  for protocols that word their own probe timeouts.

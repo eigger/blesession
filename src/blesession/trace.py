@@ -71,6 +71,11 @@ class SessionTrace:
             self._stack.pop()
             self._timings[name] = round(self._timings.get(name, 0.0) + perf_counter() - started, 3)
 
+    def record(self, name: str, seconds: float) -> None:
+        """Add a stage measured elsewhere (a session handed over from another
+        owner, a test double standing in for a writer)."""
+        self._timings[name] = round(self._timings.get(name, 0.0) + seconds, 3)
+
     def fail(self, name: str) -> None:
         """Record a failure in a stage that reported it by return value.
 

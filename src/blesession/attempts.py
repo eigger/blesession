@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from asyncio import sleep
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -147,7 +148,8 @@ async def run_attempts[T](
             on_attempt(attempt)
         if attempt.ok or number == max_attempts or not retry_if(attempt):
             return attempt
-        # Lock released: other devices go first.
-        await asyncio.sleep(pause_s)
+        # Lock released: other devices go first. Module-level `sleep` so an
+        # integration's tests can stub the pause.
+        await sleep(pause_s)
     assert attempt is not None
     return attempt

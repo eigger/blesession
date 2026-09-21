@@ -140,3 +140,9 @@ async def test_notifications_unsubscribe_failure_does_not_mask(client):
     client.fail_stop_notify = None
     async with Notifications(client, "n"):
         pass  # not connected: stop_notify skipped, no error
+
+
+def test_notification_timeout_can_carry_its_own_wording():
+    exc = NotificationTimeout(2, step="START", message="No response to START after 3 probes")
+    assert str(exc) == "No response to START after 3 probes"
+    assert exc.step == "START" and exc.detail == "START"

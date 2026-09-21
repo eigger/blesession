@@ -25,7 +25,7 @@ def no_sleep(monkeypatch):
     async def sleep(s):
         sleeps.append(s)
 
-    monkeypatch.setattr(attempts_mod.asyncio, "sleep", sleep)
+    monkeypatch.setattr(attempts_mod, "sleep", sleep)
     return sleeps
 
 

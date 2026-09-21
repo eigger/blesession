@@ -69,3 +69,10 @@ async def test_traced_decorator_uses_self_trace_when_present():
     assert await Host().read() == 1
     assert "readout" in Host.trace.timings
     assert await Bare().read() == 2
+
+
+def test_record_adds_a_stage_measured_elsewhere():
+    trace = SessionTrace()
+    trace.record("connect", 0.25)
+    trace.record("connect", 0.25)
+    assert trace.timings == {"connect": 0.5}

@@ -31,7 +31,7 @@ from .report import FACT_KEYS, build_report, report_attempt
 from .session import DISCONNECT_TIMEOUT_S, ble_session
 from .trace import SessionTrace, traced
 
-__version__ = "0.0.1"
+__version__ = "0.1.0a1"
 
 __all__ = [
     "DISCONNECT_TIMEOUT_S",

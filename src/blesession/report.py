@@ -63,7 +63,13 @@ def build_report(
             report["failed_stage"] = stage
         if detail is not None:
             report["failed_detail"] = detail
-        likely = cause(stage, detail, error, facts) if cause is not None else None
+        # The attempt bound is the library's own mechanism, so its sentence
+        # wins; for everything else the device's reading comes first.
+        likely = None
+        if isinstance(exc, AttemptTimedOut):
+            likely = generic_cause(stage, error, facts, exc=exc, noun=noun)
+        if likely is None and cause is not None:
+            likely = cause(stage, detail, error, facts)
         if likely is None:
             likely = generic_cause(stage, error, facts, exc=exc, noun=noun)
         if likely is not None:

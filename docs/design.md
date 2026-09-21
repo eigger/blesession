@@ -1,7 +1,7 @@
 # blesession — design
 
-*Status: 0.0.1 — the core is written and tested without Home Assistant;
-no integration uses it yet. Written from the two integrations that already
+*Status: 0.1.0a1 — `hass-ble-esl` is on it (its full suite, on a real Home
+Assistant core, passes); on-device testing next. Written from the two integrations that already
 have this instrumentation (`hass-ble-esl`, `hass-omron`) and a survey of
 the ones that do not (`hass-catprinter`, `hass-niimbot`, `hass-gicisky`,
 `hass-zhsunyco`, `hass-lywsd02`, `hass-marklife`, `hass-minibig`,

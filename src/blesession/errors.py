@@ -57,8 +57,10 @@ class NotificationTimeout(BleSessionError, TimeoutError):
     working; unlike asyncio's it always carries a message.
     """
 
-    def __init__(self, timeout: float, *, step: str) -> None:
-        super().__init__(f"No response from device within {timeout:g}s after {step}", detail=step)
+    def __init__(self, timeout: float, *, step: str, message: str | None = None) -> None:
+        super().__init__(
+            message or f"No response from device within {timeout:g}s after {step}", detail=step
+        )
         self.step = step
         self.timeout = timeout
 
