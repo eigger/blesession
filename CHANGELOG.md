@@ -12,9 +12,9 @@ them, so any change to them is at least a minor bump and is listed here.
 
 ## [0.1.0] — 2026-09-22
 
-First release. Same code as 0.1.0a2, verified on device with `hass-ble-esl`
-0.10.0b1 over a Bluetooth proxy: `via` / `via_type` / `advertised_via`,
-`failed_stage` / `failed_detail` / `likely_cause` as designed.
+First release. Same code as 0.1.0a2, verified on device over a Bluetooth
+proxy: `via` / `via_type` / `advertised_via`, `failed_stage` /
+`failed_detail` / `likely_cause` as designed.
 
 ## [0.1.0a2] — 2026-09-22
 
@@ -28,8 +28,8 @@ First release. Same code as 0.1.0a2, verified on device with `hass-ble-esl`
 
 ## [0.1.0a1] — 2026-09-22
 
-Pre-release for on-device testing with `hass-ble-esl`. The API is what the
-ESL integration shaped; `hass-omron` is next and may still move it.
+Pre-release for on-device testing. The API may still move as more
+integrations adopt it.
 
 ### Added
 

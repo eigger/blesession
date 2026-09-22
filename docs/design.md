@@ -1,11 +1,8 @@
 # blesession — design
 
-*Status: 0.1.0 — `hass-ble-esl` 0.10.0 is on it, verified on device over a
-Bluetooth proxy. `hass-omron` is next. Written from the two integrations that already
-have this instrumentation (`hass-ble-esl`, `hass-omron`) and a survey of
-the ones that do not (`hass-catprinter`, `hass-niimbot`, `hass-gicisky`,
-`hass-zhsunyco`, `hass-lywsd02`, `hass-marklife`, `hass-minibig`,
-`hass-vson`, …).*
+*Status: 0.1.0 — verified on device over a Bluetooth proxy. Written from
+integrations that already have this instrumentation and a survey of ones
+that do not.*
 
 ## Why
 
@@ -13,15 +10,14 @@ Every Home Assistant BLE integration in this family opens a link, subscribes
 to a notification characteristic, exchanges a few frames with a timeout,
 and drops the link. Each one wrote that by hand, and each one wrote the
 notification wait differently (an `asyncio.Event`, a `Future`, a `Queue`).
-Two of them (`hass-ble-esl`, `hass-omron`) then grew the same ~300 lines of
-troubleshooting instrumentation — per-stage timings, the stage a failure
-happened in, which radio the link went over, one sentence on what the
-failure most likely means — published as sensor attributes so a failed
-session at 3 am can be read off the entity without debug logging. The other
-integrations have none of it, and would want it the day a user reports the
-same 3 am failure.
+A few then grew the same ~300 lines of troubleshooting instrumentation —
+per-stage timings, the stage a failure happened in, which radio the link
+went over, one sentence on what the failure most likely means — published
+as sensor attributes so a failed session at 3 am can be read off the entity
+without debug logging. The others have none of it, and would want it the
+day a user reports the same 3 am failure.
 
-The two implementations already drifted where it matters most: the
+The early implementations already drifted where it matters most: the
 connected-scanner probe pokes a different private bleak/habluetooth
 attribute in each (`client._connected_scanner` vs `client._backend._source`),
 and both will break on the next habluetooth change — in two places.
@@ -35,11 +31,9 @@ place that knows how to ask habluetooth which radio a link took.
 It is **not** a connection-policy library. Everything an integration learned
 the hard way about *its* device stays in the integration:
 
-- retry counts, backoff, packet pacing (`hass-ble-esl` #50)
-- lock scope: domain-wide (`ble_esl`, `catprinter`, `lywsd`), per entry
-  (`omron`), per device object (`niimbot`, `minibig`)
+- retry counts, backoff, packet pacing
+- lock scope: domain-wide, per entry, or per device object
 - bonding, pairing agents, post-connect bond settle, GATT cache clearing
-  (`omron` `connection.py` — cuff-specific end to end)
 - cooldowns between sessions, advertisement-triggered polls
 - advertisement parsing (`bluetooth-sensor-state-data` already covers it)
 - the protocol frames themselves
@@ -102,7 +96,7 @@ async with ble_session(
     trace=None,              # SessionTrace; times "connect", "session" (the block), "disconnect"
     settle_s=0.0,            # pause after connect before the first GATT op
     disconnect_timeout_s=10, # bound on the disconnect, outside the attempt bound
-    keep=False,              # True: leave the link up (printers' keep_connection)
+    keep=False,              # True: leave the link up (e.g. keep_connection)
     close_stale=False,       # bleak_retry_connector.close_stale_connections_by_address first
     **connect_kwargs,        # use_services_cache, pair, ... -> establish_connection
 ) as client:
@@ -121,14 +115,10 @@ Rules, all of which at least one integration currently gets differently:
   of the block like any other session error and counts as an attempt.
 - The disconnect runs in `finally`, with its own timeout, and a disconnect
   failure never masks the original exception. It is logged at debug, not
-  warning (`lywsd` warns on every one).
+  warning.
 - `keep=True` skips the disconnect; the caller owns the link.
 - The scanner the link went over is captured on the client right after
   connecting (see §7) so it is available even if the session dies later.
-
-Source: `ble_esl/esl_ble/base.py::ble_session`, generalised with the
-`keep_connection` option from `catprinter`/`marklife` and `close_stale` from
-`catprinter`/`marklife`/`lywsd`.
 
 ### 2. Notifications — `Notifications`
 
@@ -139,9 +129,8 @@ async with Notifications(client, NOTIFY_UUID, settle=0.5) as replies:
     done  = await replies.wait_for(is_done, timeout=120, step="finish")
 ```
 
-- Queue-based: replies that arrive before the wait are not lost (the
-  `Event` implementations in `gicisky`, `vson`, `lywsd`, `niimbot`,
-  `zhsunyco` can miss a reply that lands between two waits).
+- Queue-based: replies that arrive before the wait are not lost (an
+  `Event`-based wait can miss a reply that lands between two waits).
 - `step` is **required** on every wait. `NotificationTimeout` carries it,
   so a timeout already names the stage that failed.
 - `clear()` drops what arrived so far (protocols that must ignore a late
@@ -149,26 +138,22 @@ async with Notifications(client, NOTIFY_UUID, settle=0.5) as replies:
 - `wait_for(accept)` lets `accept` raise to turn an error frame into the
   session's failure.
 - `__aexit__` unsubscribes and ignores a failure on a dropped link.
-- Multi-channel protocols (`omron`, `marklife`'s rx/cx) open one
-  `Notifications` per characteristic. A handle-indexed dispatcher is out of
-  scope.
-
-Source: `ble_esl/esl_ble/base.py::Notifications`, unchanged.
+- Multi-channel protocols open one `Notifications` per characteristic. A
+  handle-indexed dispatcher is out of scope.
 
 ### 3. Stage vocabulary — fixed primary stages
 
 Integrations that compare across devices need the same first-level names.
-`hass-ble-esl` has six, `hass-omron` nine, nobody else has any. The primary
-set is fixed; a device adds a `detail`.
+The primary set is fixed; a device adds a `detail`.
 
 | stage         | meaning                                                   | device detail examples                     |
 |---------------|-----------------------------------------------------------|--------------------------------------------|
 | `unreachable` | no radio sees the device; nothing was tried               |                                            |
-| `connect`     | the link never came up                                    | omron: `settle` (dropped during bond settle) |
-| `session`     | connected, failed before the protocol's first stage       | service discovery, CCCD write; omron `services` |
-| `auth`        | authentication / unlock / handshake                       | esl `handshake`; omron `pair`, `unlock`    |
-| `transfer`    | the data exchange                                         | image parts; omron `readout`; a print job  |
-| `finish`      | the completion wait after the last data frame             | panel refresh; end-command ack; omron `memory_close` |
+| `connect`     | the link never came up                                    | `settle` (dropped during bond settle)      |
+| `session`     | connected, failed before the protocol's first stage       | service discovery, CCCD write; `services`  |
+| `auth`        | authentication / unlock / handshake                       | `handshake`, `pair`, `unlock`              |
+| `transfer`    | the data exchange                                         | image parts; `readout`; a print job        |
+| `finish`      | the completion wait after the last data frame             | panel refresh; end-command ack             |
 | `disconnect`  | only the close failed (harmless)                          |                                            |
 
 `SessionTrace.timed(name)` accepts any name; `SessionTrace(stage_map=...)`
@@ -180,8 +165,6 @@ dropped.
 
 ### 4. Stage trace — `SessionTrace`
 
-Taken from `hass-omron/omron_ble/session_trace.py` as is:
-
 - `timed(name)` context manager, nests; a repeated stage adds up.
 - The **innermost stage an exception escapes from** is `failed_stage`, and
   the first one wins, so a close that also fails does not overwrite the
@@ -192,9 +175,9 @@ Taken from `hass-omron/omron_ble/session_trace.py` as is:
 - `as_dict()` → `failed_stage`, facts, then `<stage>_s` in run order.
 - `@traced("stage")` decorator for session methods.
 
-`hass-ble-esl`'s `WriteTiming` (which infers the failed stage from which
-keys are present) is retired in favour of this; the ESL-specific
-`failed_in_transfer` becomes `trace.failed_stage == "transfer"`.
+Earlier timing helpers that inferred the failed stage from which keys were
+present are retired in favour of this; a transfer-specific flag becomes
+`trace.failed_stage == "transfer"`.
 
 ### 5. Timeouts — three levels
 
@@ -206,16 +189,15 @@ keys are present) is retired in favour of this; the ESL-specific
 
 The attempt bound exists because a GATT write has no timeout of its own: a
 proxy that dies mid-transfer leaves the attempt hanging, and if it holds a
-lock, everything else hangs with it (`ble_esl` #49, `omron`
-`POLL_TIMEOUT_SECONDS`). The library wraps the attempt in `asyncio.timeout`
-and records `timed_out=True` on the report; whether a timed-out attempt is
-retried is policy (§6), with the default being *no* — the transport is dead,
-not the device unwilling.
+lock, everything else hangs with it. The library wraps the attempt in
+`asyncio.timeout` and records `timed_out=True` on the report; whether a
+timed-out attempt is retried is policy (§6), with the default being *no* —
+the transport is dead, not the device unwilling.
 
 ### 6. Attempts and the lock — `run_attempts()`
 
 The lock itself and its scope belong to the integration. What the library
-fixes is the **contract**, learned in `ble_esl` #50 and `omron`:
+fixes is the **contract**:
 
 - The lock is held for **one attempt**, not the whole retry sequence.
   Between attempts (the pause, or after a timed-out attempt) it is released
@@ -248,8 +230,7 @@ pacing, a cooldown, or giving up is decided in `retry_if` and that state.
 
 ### 7. Radio facts — `blesession.hass.radio_facts()`
 
-Four copies exist today: `ble_esl` `_transport`, `omron` `radio_facts`,
-`catprinter` `via_proxy`, `omron` `is_local_adapter`. One function:
+Integrations previously each probed the radio a different way. One function:
 
 ```python
 facts = radio_facts(hass, address, trace.link)
@@ -264,7 +245,7 @@ facts = radio_facts(hass, address, trace.link)
   failover is possible
 - `advertised_via` — the scanner whose advertisement was strongest, only
   when it is not the one the link took (a failover, or on multi-proxy
-  setups the one that holds the bond — `omron` #91)
+  setups the radio that holds the bond)
 
 `link.connected_via(client)` is the single place that probes private
 attributes, in order: `client._connected_scanner` (habluetooth's wrapper),
@@ -277,7 +258,7 @@ later; `radio_facts()` resolves it to scanner names when the report is
 built.
 
 `is_proxy(ble_device)` is exposed for integrations that adapt pacing to the
-transport (`catprinter`'s proxy packet interval).
+transport (e.g. a longer packet interval over a proxy).
 
 ### 8. Report — `build_report()` and attribute keys
 
@@ -288,7 +269,7 @@ report = build_report(
     exc=exc,                    # None on success
     facts=radio_facts(...),
     cause=my_likely_cause,      # (stage, detail, error, facts) -> str | None
-    noun="tag",                 # what the generic sentences call the device
+    noun="device",              # what the generic sentences call the device
 )
 report = report_attempt(attempt, operation="write", facts=..., cause=..., attempts=3)
 ```
@@ -311,13 +292,12 @@ integrations:
 - **last session** — the most recent, success or failure, on the
   duration/timestamp sensor's attributes
 - **last failure** — kept until the next failure, so a success does not
-  erase the evidence (`ble_esl`'s `last_failure_timing`)
+  erase the evidence
 
 ### 9. Generic likely-cause sentences — `causes.py`
 
-`ble_esl` and `omron` already have these character for character apart from
-the noun. They key on the primary stage and the error text, take the noun
-as a parameter, and return `None` when they have nothing to say so the
+The generic sentences key on the primary stage and the error text, take the
+noun as a parameter, and return `None` when they have nothing to say so the
 integration's own table takes over:
 
 - weak signal placement: `rssi <= -85`, plus "and no other radio reaches
@@ -329,15 +309,14 @@ integration's own table takes over:
 - attempt deadline → the BLE stack stopped answering; restart adapter/proxy
 - `disconnect` → the work was done; only the close failed
 
-Device sentences ("the tag rejected authentication: not a WOLINK tag",
-"the cuff was not showing -P-") stay in the integration's `cause` callback,
-which runs first.
+Device sentences stay in the integration's `cause` callback, which runs
+first.
 
 ### 10. Errors — `errors.py`
 
-`omron` #133: a device that is off, out of range, or asleep is the ordinary
-case and must not produce a traceback ("this error originated from a custom
-integration"). Only a bug should.
+A device that is off, out of range, or asleep is the ordinary case and must
+not produce a traceback ("this error originated from a custom integration").
+Only a bug should.
 
 ```
 BleSessionError(stage, detail=None)
@@ -361,8 +340,8 @@ and defaults so config flows can share code; it does not read config.
 
 ## What an integration keeps
 
-For a simple write-and-disconnect device (`vson`, `gicisky`), adopting the
-library leaves roughly:
+For a simple write-and-disconnect device, adopting the library leaves
+roughly:
 
 - the protocol frames and the writer, using `Notifications` with `step=`
 - a stage table: device stage name → primary stage (often identity)
@@ -373,15 +352,14 @@ Around 50–80 lines beyond the protocol itself.
 
 ## Rollout
 
-1. Make `hass-ble-esl` and `hass-omron` match this design in place
-   (`WriteTiming` → `SessionTrace`, `_transport`/`radio_facts` → one
-   function). This is where the API is proven against the two hardest cases.
-2. Move the matched code here; publish 0.1.0; both integrations depend on it
-   from `manifest.json` `requirements`, as they already do with `imagespec`.
-3. Third integration: the **simplest** one (`vson` or `gicisky`). If the API
-   only fits the two that shaped it, this is where it shows.
-4. The rest, one at a time, printers (`catprinter`, `marklife`, `niimbot`)
-   last — they have `keep_connection` and their own client objects and will
+1. Prove the API against the integrations that already have instrumentation
+   (timing helpers → `SessionTrace`, per-integration radio probes → one
+   function).
+2. Move the matched code here; publish 0.1.0; integrations depend on it from
+   `manifest.json` `requirements`.
+3. Adopt next on the **simplest** remaining integration. If the API only
+   fits the ones that shaped it, this is where it shows.
+4. The rest one at a time; devices that keep a long-lived link last — they
    exercise `keep=True`.
 
 ## Testing — `blesession.testing`
@@ -408,21 +386,20 @@ library can retire its own client mocks.
 
 ## Direction after 0.1
 
-- **Versioning.** 0.x until the third integration is on it; integrations
-  pin an exact version in `manifest.json` as they do with `imagespec`.
-  Anything that changes a report key or a stage name is a minor bump and a
-  CHANGELOG entry, because troubleshooting docs quote them.
+- **Versioning.** 0.x until a third integration is on it; integrations pin
+  an exact version in `manifest.json`. Anything that changes a report key
+  or a stage name is a minor bump and a CHANGELOG entry, because
+  troubleshooting docs quote them.
 - **Shared troubleshooting doc.** Once two integrations publish the same
   keys, one `docs/troubleshooting.md` here (with a `docs/ko/` copy)
   explains `failed_stage` / `likely_cause` / `via` for all of them; each
   integration's own doc links to it and adds only its device sentences.
-- **Bonded devices.** `omron`'s bond settle with retry, the pairing agent
-  and pair-on-connect stay in `hass-omron`. If a second bonded device
-  appears (a scale, a thermometer with a key), the connect-with-settle
-  loop is the candidate to move here, behind `ble_session(settle_s=...,
-  settle_attempts=...)`.
-- **Printers.** `catprinter` / `marklife` / `niimbot` keep a client object
-  and a `keep_connection` option; adopting `keep=True` will show whether
+- **Bonded devices.** Bond settle with retry, pairing agents, and
+  pair-on-connect stay in each integration. If a second bonded device type
+  appears, the connect-with-settle loop is the candidate to move here,
+  behind `ble_session(settle_s=..., settle_attempts=...)`.
+- **Long-lived links.** Integrations that keep a client object and a
+  `keep_connection` option will show, when adopting `keep=True`, whether
   the trace needs a notion of "this session reused an open link".
 - **Not planned.** Retry policy, pacing, cooldowns, advertisement parsing.
   If the same policy shows up in three integrations, it becomes a

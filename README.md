@@ -11,25 +11,16 @@ likely means**, ready to publish as sensor attributes so a failed session at
 
 ## Status
 
-**0.1.0 — first release.** `hass-ble-esl` 0.10.0 runs on it, verified on
-device over a Bluetooth proxy; `hass-omron` is next. The library is tested
-without Home Assistant (`pytest`).
+**0.1.0 — first release.** Verified on device over a Bluetooth proxy. The
+library is tested without Home Assistant (`pytest`).
 Read [`docs/design.md`](docs/design.md) for what belongs here, what
 deliberately does not, how a Bluetooth-proxy route works without importing
 Home Assistant, and the rollout plan.
 
-The design is extracted from two integrations that already carry this
-instrumentation and have drifted apart:
-
-- [`hass-ble-esl`](https://github.com/eigger/hass-ble-esl) — e-paper shelf
-  labels (write an image, wait for the panel)
-- [`hass-omron`](https://github.com/eigger/hass-omron) — blood pressure
-  monitors (bonded, unlock, read record memory)
-
-and is meant to be adopted by the rest of the family (`hass-catprinter`,
-`hass-niimbot`, `hass-gicisky`, `hass-zhsunyco`, `hass-lywsd02`,
-`hass-marklife`, `hass-minibig`, `hass-vson`, …), which today each hand-roll
-the same notification wait and have no failure attribution at all.
+The design is extracted from integrations that already carry this
+instrumentation (and had drifted apart), and is meant to be adopted by
+others that today each hand-roll the same notification wait and have no
+failure attribution at all.
 
 ## What it provides
 
@@ -74,7 +65,7 @@ try:
                 ...
 except ConnectionError as exc:          # every session error is one
     report = build_report(operation="write", trace=trace, exc=exc,
-                          facts=radio_facts(hass, address, trace.link), noun="tag")
+                          facts=radio_facts(hass, address, trace.link), noun="device")
     # {'operation': 'write', 'success': False, 'error': ..., 'failed_stage': 'auth',
     #  'failed_detail': 'start', 'likely_cause': ..., 'via': ..., 'connect_s': ..., ...}
 ```
