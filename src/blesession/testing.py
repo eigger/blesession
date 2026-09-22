@@ -8,7 +8,7 @@ way everywhere.
     client.reply(b"\x01")                    # queued for the next start_notify handler
     async with Notifications(client, "uuid") as replies:
         assert await replies.next(1, step="x") == b"\x01"
-    client.drop()                             # is_connected -> False from now on
+    client.drop()                             # link gone: is_connected False, callback fired
 """
 
 from __future__ import annotations
@@ -32,6 +32,8 @@ class FakeClient:
         self.fail_disconnect: BaseException | None = None
         self.fail_write: BaseException | None = None
         self.disconnect_delay_s: float = 0.0
+        self.disconnected_callback: Callable[[Any], None] | None = None
+        """Set by fake_connect(); fired by drop() and disconnect(), as bleak does."""
         self._pending: list[bytes] = []
 
     # ── bleak surface ────────────────────────────────────────────────────
@@ -64,7 +66,7 @@ class FakeClient:
             await asyncio.sleep(self.disconnect_delay_s)
         if self.fail_disconnect is not None:
             raise self.fail_disconnect
-        self.is_connected = False
+        self.drop()
 
     # ── test controls ────────────────────────────────────────────────────
 
@@ -79,8 +81,17 @@ class FakeClient:
             handler(characteristic, bytearray(data))
 
     def drop(self) -> None:
-        """The link went away."""
+        """The link went away: is_connected goes False and the disconnect
+        callback fires, so a wait on the link ends the way it does on device.
+
+        Dropping an already dropped link does nothing; bleak calls the
+        callback once per link.
+        """
+        if not self.is_connected:
+            return
         self.is_connected = False
+        if self.disconnected_callback is not None:
+            self.disconnected_callback(self)
 
 
 class FakeDevice:
@@ -99,12 +110,17 @@ def fake_connect(
 ) -> Callable[..., Any]:
     """An establish_connection replacement returning `client` (or raising `fail`).
 
+    The `disconnected_callback` ble_session() passes is wired to the client,
+    so `client.drop()` reaches the session the way a real disconnect does.
+
     monkeypatch.setattr(blesession.session, "establish_connection", fake_connect(client))
     """
 
-    async def _connect(_cls: Any, _device: Any, _name: str, **_kwargs: Any) -> FakeClient:
+    async def _connect(_cls: Any, _device: Any, _name: str, **kwargs: Any) -> FakeClient:
         if fail is not None:
             raise fail
-        return client if client is not None else FakeClient()
+        connected = client if client is not None else FakeClient()
+        connected.disconnected_callback = kwargs.get("disconnected_callback")
+        return connected
 
     return _connect

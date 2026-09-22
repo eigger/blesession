@@ -1,11 +1,18 @@
 """One sentence on what a failed session most likely means — the generic part.
 
-Read from where it died (the primary stage), the error text and the radio
-situation. Best effort: the report keeps the exact `error` beside it. A
-device's own sentences ("the tag rejected authentication: not a WOLINK
+Read from where it died (the primary stage), what kind of failure it was and
+the radio situation. Best effort: the report keeps the exact `error` beside
+it. A device's own sentences ("the tag rejected authentication: not a WOLINK
 tag", "the cuff was not showing -P-") come from the integration's cause
 callback, which build_report() consults first; these fill in when it has
 nothing to say.
+
+The kind of failure is read from the exception *and* from the error text,
+never from one or the other: the type carries an integration that worded
+its own timeout (`NotificationTimeout(message=...)`), and the text carries a
+failure that says the same thing without carrying the type. `build_report()`
+always has the exception to hand, so a text marker behind an
+"only when there is no exception" guard would never be read at all.
 """
 
 from __future__ import annotations
@@ -14,7 +21,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from . import stages
-from .errors import AttemptTimedOut
+from .errors import AttemptTimedOut, NotificationTimeout, SessionDropped
 
 WEAK_RSSI_DBM = -85
 """At or below this the placement advice is worth giving; above it the radio
@@ -46,11 +53,17 @@ def generic_cause(
 ) -> str | None:
     """The generic sentence for a failure, or None when there is none.
 
-    Keyed on the primary stage and a few error-text markers that every
-    transport produces the same way.
+    Keyed on the primary stage and the kind of failure: the attempt bound,
+    a link that dropped, a step that went unanswered.
     """
     err = error.lower()
     where = placement(facts, noun=noun)
+    # The type first, so a NotificationTimeout an integration worded itself
+    # still reads as one; the text marker stays beside it, so a failure that
+    # says as much without carrying the type keeps its sentence too. Both,
+    # never either — as the `settle` branch below does it.
+    unanswered = isinstance(exc, NotificationTimeout) or "no response" in err
+    lost = isinstance(exc, SessionDropped) or "link dropped" in err
     if isinstance(exc, AttemptTimedOut):
         return (
             "The BLE stack stopped answering mid-session and the attempt was cut at "
@@ -68,13 +81,20 @@ def generic_cause(
                 "The proxy has no free connection slot; add a proxy or reduce the "
                 "BLE devices it serves."
             )
-        if "settle" in err:
+        if getattr(exc, "detail", None) == "settle" or "settle" in err:
             return (
                 f"The {noun} accepted the link and dropped it before encryption "
                 "settled: on a multi-proxy setup usually a proxy that does not hold "
                 "the bond, otherwise a stale bond — pair again if it repeats."
             )
         return f"The BLE link could not be established.{where}"
+    if lost and stage != stages.DISCONNECT:
+        # A drop the *close* reported is the close failing, not the session:
+        # the work was already done, and the stage below says so.
+        return (
+            f"The link to the {noun} went away mid-session: out of range, powered "
+            f"down, or the adapter / proxy reset.{where}"
+        )
     if stage == stages.SESSION:
         return (
             f"Connected, but the {noun} dropped or refused the session before the "
@@ -82,17 +102,17 @@ def generic_cause(
             "— if it repeats, the protocol or model may not match."
         )
     if stage == stages.AUTH:
-        if "no response" in err:
+        if unanswered:
             return (
                 f"The {noun} did not answer the handshake: not ready, or the link dropped.{where}"
             )
         return None
     if stage == stages.TRANSFER:
-        if "no response" in err:
+        if unanswered:
             return f"The {noun} stopped answering mid-transfer: link dropped or reset.{where}"
         return None
     if stage == stages.FINISH:
-        if "no response" in err:
+        if unanswered:
             return f"The {noun} took the data but did not report completion in time.{where}"
         return None
     if stage == stages.DISCONNECT:

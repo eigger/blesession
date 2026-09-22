@@ -1,6 +1,6 @@
 # blesession — design
 
-*Status: 0.1.0 — verified on device over a Bluetooth proxy. Written from
+*Status: 0.2.0 — verified on device over a Bluetooth proxy. Written from
 integrations that already have this instrumentation and a survey of ones
 that do not.*
 
@@ -46,7 +46,7 @@ The library supplies **mechanism and vocabulary**; the integration supplies
 ```
 blesession/
   __init__.py       re-exports the public API
-  session.py        ble_session(), current_client_class()
+  session.py        ble_session(), current_client_class(), dropped_event()
   notifications.py  Notifications
   trace.py          SessionTrace, traced()
   stages.py         the fixed stage vocabulary, primary_of()
@@ -109,6 +109,14 @@ CCCD write) is attributed to `session` without anyone having to say so.
 The connect wraps any bleak error in `ConnectFailed`; a drop during
 `settle_s` is `ConnectFailed(detail="settle")`.
 
+The session also **watches the link for its whole duration**. It passes its
+own `disconnected_callback` to `establish_connection` (chaining the
+caller's, if any) and registers the resulting event under the client, where
+`dropped_event(client)` finds it. That is what lets a notification wait end
+when the link ends rather than when its timeout runs out (§2); `settle_s`
+uses the same event, falling back to polling `is_connected` for a backend
+that never fires a callback.
+
 Rules, all of which at least one integration currently gets differently:
 
 - Connecting happens *inside* the context, so a connect failure raises out
@@ -133,11 +141,21 @@ async with Notifications(client, NOTIFY_UUID, settle=0.5) as replies:
   `Event`-based wait can miss a reply that lands between two waits).
 - `step` is **required** on every wait. `NotificationTimeout` carries it,
   so a timeout already names the stage that failed.
+- A wait ends as `SessionDropped` the moment the link goes, instead of
+  running its step timeout out against a device that is no longer there —
+  the difference between a 2-second failure and a 120-second one, with the
+  lock held throughout. What is already queued is delivered first: a device
+  that sent its last reply and then dropped the link answered the step.
+  The event comes from `dropped_event(client)`; `dropped=` overrides it for
+  a connection the caller owns, and an unwatched client keeps the plain
+  timeout behaviour.
 - `clear()` drops what arrived so far (protocols that must ignore a late
   reply from a previous command).
 - `wait_for(accept)` lets `accept` raise to turn an error frame into the
   session's failure.
-- `__aexit__` unsubscribes and ignores a failure on a dropped link.
+- `__aexit__` unsubscribes and ignores a failure on a dropped link, under
+  its own `STOP_NOTIFY_TIMEOUT_S` bound — it runs *after* an attempt bound
+  has fired, so it is the one wait nothing else bounds (§5).
 - Multi-channel protocols open one `Notifications` per characteristic. A
   handle-indexed dispatcher is out of scope.
 
@@ -186,6 +204,11 @@ present are retired in favour of this; a transfer-specific flag becomes
 | step         | one notification wait                         | protocol code, via `Notifications` |
 | attempt      | one try, connecting included                  | `run_attempts()`, value from the integration |
 | disconnect   | the close, *outside* the attempt bound        | `ble_session()`                 |
+| unsubscribe  | `stop_notify`, also outside the attempt bound | `Notifications` (`STOP_NOTIFY_TIMEOUT_S`) |
+
+The last two are the waits that run in `finally` / `__aexit__`, i.e. after
+the attempt bound has already fired. Anything unbounded there hangs the
+lock exactly as the bound was meant to prevent, so both have their own.
 
 The attempt bound exists because a GATT write has no timeout of its own: a
 proxy that dies mid-transfer leaves the attempt hanging, and if it holds a
@@ -279,12 +302,19 @@ the attribute list:
 
 ```
 operation, success,
+skipped,                                                         # guard declined
 error, failed_stage, failed_detail, likely_cause, timed_out,     # failures only
 attempt, attempts,
 via, via_type, rssi, paths, advertised_via,
 <stage>_s ...,                                                     # run order
-<note facts> ...
+<note facts> ...                            # incl. disconnect_error, if any
 ```
+
+An attempt a `guard` declined is **not** a success: nothing was tried, so
+`success` is False and `skipped` carries what the guard returned, with no
+`error` beside it. A disconnect that fails after the work was done is the
+other way round — it does not fail the session, and is carried as the
+`disconnect_error` fact rather than being swallowed.
 
 Two sensor conventions, so troubleshooting docs can be shared across
 integrations:
@@ -306,8 +336,20 @@ integration's own table takes over:
 - `unreachable` → no radio sees it: range, asleep, battery, adapter down
 - `session` → dropped or refused before the protocol started; if it
   repeats, the model/profile may not match
+- a `SessionDropped` in any protocol stage → the link went away mid-session
 - attempt deadline → the BLE stack stopped answering; restart adapter/proxy
 - `disconnect` → the work was done; only the close failed
+
+The sentences read the **exception type** where there is one
+(`NotificationTimeout`, `SessionDropped`, `ConnectFailed(detail="settle")`,
+`AttemptTimedOut`), so an integration that words its own message keeps
+them. The English error-text markers sit beside those checks rather than
+behind them — `isinstance(...) or "no response" in err`, never either/or —
+because `build_report()` always has the exception, so a fallback that only
+ran without one would never run at all, and a failure that says "no
+response" without carrying the type would silently lose its sentence.
+Some markers have no type to go with them at all (a proxy's "no slot
+free").
 
 Device sentences stay in the integration's `cause` callback, which runs
 first.
@@ -322,7 +364,8 @@ Only a bug should.
 BleSessionError(stage, detail=None)
   Unreachable             no handle for the address
   ConnectFailed           establish_connection raised, or the link dropped in settle
-  SessionDropped          is_connected went False mid-session
+  SessionDropped          the link went away mid-session (carries the step
+                          that was waiting), raised by a Notifications wait
   NotificationTimeout     a step wait ran out (carries step)
   AttemptTimedOut         the attempt bound fired
 ```
@@ -368,7 +411,10 @@ Every integration's tests fake the same four bleak methods with
 `MagicMock`. `FakeClient` is the one fake: `reply(data)` delivers a
 notification (or queues it for the next subscriber), `drop()` takes the
 link down, `fail_*` script errors, `disconnect_delay_s` a hanging
-disconnect. `fake_connect(client)` replaces `establish_connection`. The
+disconnect. `drop()` also fires the `disconnected_callback`, as bleak does,
+so a drop reaches the session the way it does on device.
+`fake_connect(client)` replaces `establish_connection` and wires that
+callback up. The
 library's own tests use nothing else, and an integration adopting the
 library can retire its own client mocks.
 
@@ -400,7 +446,9 @@ library can retire its own client mocks.
   behind `ble_session(settle_s=..., settle_attempts=...)`.
 - **Long-lived links.** Integrations that keep a client object and a
   `keep_connection` option will show, when adopting `keep=True`, whether
-  the trace needs a notion of "this session reused an open link".
+  the trace needs a notion of "this session reused an open link". There is
+  no way to run a session *on* a link `keep=True` left up yet
+  (`ble_session()` always connects); a `client=` argument is the candidate.
 - **Not planned.** Retry policy, pacing, cooldowns, advertisement parsing.
   If the same policy shows up in three integrations, it becomes a
   documented recipe here before it becomes code.

@@ -26,16 +26,17 @@ from .errors import (
     error_text,
 )
 from .link import LinkInfo, connected_via, is_proxy, probe_link
-from .notifications import Notifications
+from .notifications import STOP_NOTIFY_TIMEOUT_S, Notifications
 from .report import FACT_KEYS, build_report, report_attempt
-from .session import DISCONNECT_TIMEOUT_S, ble_session
+from .session import DISCONNECT_TIMEOUT_S, ble_session, dropped_event
 from .trace import SessionTrace, traced
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "DISCONNECT_TIMEOUT_S",
     "FACT_KEYS",
+    "STOP_NOTIFY_TIMEOUT_S",
     "Attempt",
     "AttemptTimedOut",
     "BleSessionError",
@@ -50,6 +51,7 @@ __all__ = [
     "build_report",
     "connected_via",
     "default_retry_if",
+    "dropped_event",
     "error_text",
     "generic_cause",
     "is_proxy",
