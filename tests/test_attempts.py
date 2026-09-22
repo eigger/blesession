@@ -5,6 +5,7 @@ import pytest
 from blesession import (
     AttemptTimedOut,
     ConnectFailed,
+    SessionReports,
     SessionTrace,
     Unreachable,
     ble_session,
@@ -217,3 +218,47 @@ def test_a_failure_that_only_says_so_in_words_keeps_its_sentence():
         operation="write", trace=trace, exc=RuntimeError("no response after part 3/40")
     )
     assert "stopped answering mid-transfer" in report["likely_cause"]
+
+
+def test_a_success_does_not_erase_the_last_failure():
+    """The user reading the failure sensor at 3 am has usually had a working
+    session since; that is the whole point of the second slot."""
+    reports = SessionReports()
+    assert reports.last is None and reports.last_failure is None
+
+    failed = reports.record(
+        build_report(operation="write", trace=SessionTrace(), exc=ConnectFailed("no slot"))
+    )
+    assert reports.last is failed and reports.last_failure is failed
+
+    ok = reports.record(build_report(operation="write", trace=SessionTrace()))
+    assert reports.last is ok
+    assert reports.last_failure is failed  # kept
+
+    reports.clear()
+    assert reports.last is None and reports.last_failure is None
+
+
+async def test_a_skipped_session_is_not_the_failure_to_keep():
+    """`success: False` with nothing tried must not overwrite the last real
+    failure with "the write lock was held"."""
+
+    async def attempt(a):
+        raise ConnectFailed("no slot")
+
+    reports = SessionReports()
+    failed = reports.record(report_attempt(await run_attempts(attempt), operation="write"))
+
+    async def never_runs(a):
+        raise AssertionError
+
+    skipped = await run_attempts(never_runs, guard=lambda: _declined())
+    reports.record(report_attempt(skipped, operation="write"))
+
+    assert reports.last["skipped"] == "write locked"
+    assert reports.last["success"] is False
+    assert reports.last_failure is failed
+
+
+async def _declined():
+    return "write locked"

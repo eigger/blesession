@@ -13,6 +13,10 @@ What the loop fixes, each learnt from an integration that got it wrong first:
   attempt, via `guard`.
 - A timed-out attempt is not retried by default: the transport is dead, not
   the device unwilling, and a retry would only hang the lock again.
+- The device handle is resolved **inside** the attempt, not when the job was
+  queued: the route it carries can be gone, or be a different proxy, after
+  the wait for the lock. Inside Home Assistant that is
+  `blesession.hass.ble_device_or_raise(hass, address)`.
 
 What it leaves to the integration: the lock instance and its scope, how
 many attempts, the bound, the pause, and — via `retry_if` — which failures

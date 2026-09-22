@@ -10,6 +10,36 @@ Report keys (`failed_stage`, `likely_cause`, `via`, `<stage>_s`, …) and the
 primary stage names are part of the contract: troubleshooting docs quote
 them, so any change to them is at least a minor bump and is listed here.
 
+## [0.3.0] — 2026-09-22
+
+What every integration adopting the library would otherwise write the same
+way. Additive only: no existing key, stage or behaviour changes.
+
+### Added
+
+- `blesession.hass.ble_device_or_raise(hass, address)`: the handle to
+  connect with, or `Unreachable`. Resolving it inside the attempt (the
+  route a queued handle carries can be stale after the wait for the lock)
+  and raising rather than returning None (so an asleep device reaches the
+  report with a stage and a likely cause, not as an `if device is None`
+  branch worded differently in each integration) are the two things this
+  stops everyone getting subtly differently.
+- `SessionReports`: the two slots design §8 defines — `last` (any session)
+  and `last_failure` (kept until the next failure, so a success does not
+  erase the evidence). `record(report)` files a report in both as it
+  belongs and hands it back; `clear()` forgets both. A session a `guard`
+  declined becomes `last` but not `last_failure`: nothing was tried, so it
+  must not overwrite the last real failure — the slot keys on `error`,
+  not on `success`.
+
+### Testing
+
+- `blesession.hass` now has tests. It is the file most likely to break on a
+  habluetooth release and was the only one with no coverage, because
+  `homeassistant` is not a dependency; every function there imports it
+  inside the call, so a stub module in `sys.modules` exercises the lot
+  (`tests/test_hass.py`). Coverage of `hass.py` 0% → 100%, overall 90% → 96%.
+
 ## [0.2.0] — 2026-09-22
 
 A failed session now ends when the link ends, and says so. Every change
