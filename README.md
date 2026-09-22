@@ -18,10 +18,12 @@ likely means**, ready to publish as sensor attributes so a failed session at
 
 Verified on device over a Bluetooth proxy. The library is tested without
 Home Assistant (`pytest`).
-Read [`docs/design.md`](docs/design.md) for what belongs here, what
-deliberately does not, how a Bluetooth-proxy route works without importing
-Home Assistant, and the rollout plan. See [`CHANGELOG.md`](CHANGELOG.md) for
-releases.
+**Adopting it?** [`docs/adopting.md`](docs/adopting.md) is a whole
+integration end to end: what to write, what the library writes for you,
+every report key, and how to test it without bleak or Home Assistant.
+[`docs/design.md`](docs/design.md) is the *why* — what belongs here, what
+deliberately does not, and how a Bluetooth-proxy route works without
+importing Home Assistant. See [`CHANGELOG.md`](CHANGELOG.md) for releases.
 
 The design is extracted from integrations that already carry this
 instrumentation (and had drifted apart), and is meant to be adopted by
@@ -65,7 +67,8 @@ integration learned from its own device and keeps.
 ```
 src/blesession/         pure Python + bleak, tested without Home Assistant
 src/blesession/hass.py  imports homeassistant lazily; only used inside HA
-docs/design.md          the design
+docs/adopting.md        how to use it, with a whole integration
+docs/design.md          why it is shaped this way
 ```
 
 ```python

@@ -4,6 +4,10 @@
 integrations that already have this instrumentation and a survey of ones
 that do not.*
 
+*Adopting the library rather than designing it?*
+[`adopting.md`](adopting.md) *is the guide: a whole integration end to end,
+every report key, and how to test it.*
+
 ## Why
 
 Every Home Assistant BLE integration in this family opens a link, subscribes
@@ -467,7 +471,7 @@ and defaults so config flows can share code; it does not read config.
 ## What an integration keeps
 
 For a simple write-and-disconnect device, adopting the library leaves
-roughly:
+roughly (see [`adopting.md`](adopting.md) for the whole thing):
 
 - the protocol frames and the writer, using `Notifications` with `step=`
 - a stage table: device stage name → primary stage (often identity)

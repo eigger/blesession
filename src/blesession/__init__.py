@@ -31,7 +31,8 @@ from .report import FACT_KEYS, SessionReports, build_report, report_attempt
 from .session import DISCONNECT_TIMEOUT_S, ble_session, dropped_event, still_up
 from .trace import SessionTrace, traced
 
-__version__ = "0.3.0"
+__version__ = "0.2.0"
+"""The one place the version is written; pyproject.toml reads it."""
 
 __all__ = [
     "CAUSES",

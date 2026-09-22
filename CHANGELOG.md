@@ -11,27 +11,64 @@ primary stage names and the `likely_cause_key` names are part of the
 contract: troubleshooting docs quote them and integrations translate them,
 so any change to them is at least a minor bump and is listed here.
 
-## [Unreleased]
+## [0.2.0] — 2026-09-22
+
+A failed session now ends when the link ends and says so, a link can
+outlive one session, and what every integration was going to write for
+itself lives here instead.
 
 ### Added
 
+- `SessionDropped` is now actually raised. `ble_session()` watches the link
+  for the whole session (it passes its own `disconnected_callback` to
+  `establish_connection`, chaining yours if you pass one), and every
+  `Notifications` wait on that client ends the moment the link goes instead
+  of running its step timeout out with the lock held. A notification that
+  arrived before the drop is still delivered first. `dropped_event(client)`
+  exposes the event; `Notifications(..., dropped=...)` takes one for a
+  connection you own.
+- `STOP_NOTIFY_TIMEOUT_S` (5s), a bound on the unsubscribe in
+  `Notifications.__aexit__`. It runs *after* an attempt bound has fired, so
+  nothing else bounded it: a proxy that stopped answering could hang there
+  holding the lock — the one thing the attempt bound exists to prevent.
 - `ble_session(client=...)`: run a session on a link a previous `keep=True`
   session left up. It is used only if it is still up, so the caller never
   has to check a stale handle; otherwise a fresh link is opened and handed
   back as usual. A reused link times no `connect` stage and the trace notes
   `reused=True`, so a missing `connect_s` reads as "there was none" rather
   than as a measurement that went missing. It keeps the drop watch it
-  already had, so a `Notifications` wait on it still ends the moment the
-  link goes. `settle_s`, `close_stale` and the connect kwargs describe
+  already had. `settle_s`, `close_stale` and the connect kwargs describe
   opening a link and are not applied to one already up — `close_stale` in
-  particular would have killed the very link being reused.
-- `still_up(client)`, the check behind it. A handle it turns down that is
-  somehow still open (the drop callback arrived before `is_connected`
-  caught up, which is why the check looks at both) is closed under the
-  disconnect bound before the fresh link is opened, and a close that fails
-  is noted as `stale_close_error`. The caller is about to overwrite its
-  reference with the client handed back, so an abandoned link would hold a
-  proxy's connection slot until something else noticed.
+  particular would have closed the very link being reused.
+- `still_up(client)`, the check behind it: the drop event as well as
+  `is_connected`, because the callback can arrive first. A handle it turns
+  down that is somehow still open is closed under the disconnect bound
+  before the fresh link is opened, and a close that fails is noted as
+  `stale_close_error`. The caller is about to overwrite its reference with
+  the client handed back, so an abandoned link would hold a proxy's
+  connection slot until something else noticed.
+- `blesession.hass.ble_device_or_raise(hass, address)`: the handle to
+  connect with, or `Unreachable`. Resolving it inside the attempt (the
+  route a queued handle carries can be stale after the wait for the lock)
+  and raising rather than returning None (so an asleep device reaches the
+  report with a stage and a likely cause, not as an `if device is None`
+  branch worded differently in each integration) are the two things this
+  stops everyone getting subtly differently.
+- `Unreachable(address, connectable=False)`: wording only, for a handle
+  looked up with `connectable=False`. It was not refused for being
+  unconnectable, so the message no longer says no *connectable* radio saw
+  it. The default message is unchanged.
+- `SessionReports`: the two slots `docs/design.md` §8 defines — `last` (any
+  session) and `last_failure` (kept until the next failure, so a success
+  does not erase the evidence). `record(report)` files a report in both as
+  it belongs and hands it back; `clear()` forgets both. A session a `guard`
+  declined becomes `last` but not `last_failure`: nothing was tried, so it
+  must not overwrite the last real failure — the slot keys on `error`, not
+  on `success`. Record from `run_attempts(on_attempt=...)`, not from the
+  attempt it returns: it hands back the last attempt only, so filing that
+  one alone loses a first attempt that failed and a second that worked.
+- `build_report(skipped=...)`, filled in by `report_attempt()` from
+  `Attempt.skipped`.
 - `likely_cause_key` on the report: the stable name of the generic sentence
   (`connect.no_slot`, `auth.no_answer`, `link_lost`, …), so an integration
   can publish a Home Assistant translation instead of the English text.
@@ -46,79 +83,11 @@ so any change to them is at least a minor bump and is listed here.
   its signature and every sentence unchanged. A test holds the two halves
   of the table to each other, so a key can never be returned without a
   sentence to go with it.
-
-## [0.3.0] — 2026-09-22
-
-What every integration adopting the library would otherwise write the same
-way. Additive only: no existing key, stage or behaviour changes.
-
-### Added
-
-- `blesession.hass.ble_device_or_raise(hass, address)`: the handle to
-  connect with, or `Unreachable`. Resolving it inside the attempt (the
-  route a queued handle carries can be stale after the wait for the lock)
-  and raising rather than returning None (so an asleep device reaches the
-  report with a stage and a likely cause, not as an `if device is None`
-  branch worded differently in each integration) are the two things this
-  stops everyone getting subtly differently.
-- `Unreachable(address, connectable=False)`: wording only, for a handle
-  looked up with `connectable=False`. It was not refused for being
-  unconnectable, so the message no longer says no *connectable* radio saw
-  it. The default message is unchanged.
-- `SessionReports`: the two slots design §8 defines — `last` (any session)
-  and `last_failure` (kept until the next failure, so a success does not
-  erase the evidence). `record(report)` files a report in both as it
-  belongs and hands it back; `clear()` forgets both. A session a `guard`
-  declined becomes `last` but not `last_failure`: nothing was tried, so it
-  must not overwrite the last real failure — the slot keys on `error`,
-  not on `success`. Record from `run_attempts(on_attempt=...)`, not from
-  the attempt it returns: it hands back the last attempt only, so filing
-  that one alone loses a first attempt that failed and a second that
-  worked, which is the failure the second slot exists to keep.
-
-### Changed
-
-- **`run_attempts(on_attempt=...)` is now called for an attempt a `guard`
-  declined**, as it already was for a failed or successful one. It used to
-  return from inside the lock before reaching it, so the only way to see a
-  declined attempt was to inspect the returned one — which left the
-  recommended `on_attempt` recording unable to publish it at all, and
-  `SessionReports`' rule for a declined session (`last`, not
-  `last_failure`) unreachable through that path. It is still called
-  outside the lock, and a declined attempt is still not retried.
-
-### Testing
-
-- `blesession.hass` now has tests. It is the file most likely to break on a
-  habluetooth release and was the only one with no coverage, because
-  `homeassistant` is not a dependency; every function there imports it
-  inside the call, so a stub module in `sys.modules` exercises the lot
-  (`tests/test_hass.py`). Coverage of `hass.py` 0% → 100%, overall 90% → 96%.
-
-## [0.2.0] — 2026-09-22
-
-A failed session now ends when the link ends, and says so. Every change
-here is about the same thing: a dead link used to be found out by waiting a
-timeout out, and two failures used to disappear from the report entirely.
-
-### Added
-
-- `SessionDropped` is now actually raised. `ble_session()` watches the link
-  for the whole session (it passes its own `disconnected_callback` to
-  `establish_connection`, chaining yours if you pass one), and every
-  `Notifications` wait on that client ends the moment the link goes instead
-  of running its step timeout out. A notification that arrived before the
-  drop is still delivered first. `dropped_event(client)` exposes the event;
-  `Notifications(..., dropped=...)` takes one for a connection you own.
-- `STOP_NOTIFY_TIMEOUT_S` (5s), a bound on the unsubscribe in
-  `Notifications.__aexit__`. It runs *after* an attempt bound has fired, so
-  nothing else bounded it: a proxy that stopped answering could hang there
-  holding the lock — the one thing the attempt bound exists to prevent.
-- `build_report(skipped=...)`, filled in by `report_attempt()` from
-  `Attempt.skipped`.
-- `blesession.testing`: `FakeClient.disconnected_callback`, fired by `drop()`
-  and `disconnect()` as bleak does — once per link — and wired up by
-  `fake_connect()`.
+- `blesession.testing`: `FakeClient.disconnected_callback`, fired by
+  `drop()` and `disconnect()` as bleak does — once per link — and wired up
+  by `fake_connect()`.
+- [`docs/adopting.md`](docs/adopting.md): a whole integration, end to end,
+  with what the library provides and what stays yours.
 
 ### Changed
 
@@ -126,6 +95,12 @@ timeout out, and two failures used to disappear from the report entirely.
   `success: True` (nothing had raised), now `success: False` with a
   `skipped` key carrying what the guard returned. Nothing was tried, so the
   session did not succeed.
+- **`run_attempts(on_attempt=...)` is now called for an attempt a `guard`
+  declined**, as it already was for a failed or successful one. It used to
+  return from inside the lock before reaching it, so a declined attempt
+  could not be published at all through the recording `SessionReports`
+  recommends. It is still called outside the lock, and a declined attempt
+  is still not retried.
 - **A disconnect that fails after a successful session**: was swallowed and
   lost, now noted as a `disconnect_error` fact on the trace and so on the
   report. It still does not fail the session. The `trace.forgive()` call
@@ -137,11 +112,23 @@ timeout out, and two failures used to disappear from the report entirely.
   integration worded the message itself (`NotificationTimeout(message=...)`),
   which the English text markers alone could not do. Those markers stay
   beside the type checks, so a failure that says as much without carrying
-  the type keeps the sentence it had in 0.1.0. This is purely additive:
-  no failure that had a generic sentence loses it.
-- A new generic sentence for a link that went away mid-session, used for
-  `session` / `auth` / `transfer` / `finish` in place of the per-stage
-  "no response" ones when the failure is a `SessionDropped`.
+  the type keeps the sentence it had in 0.1.0. Purely additive: no failure
+  that had a generic sentence loses it.
+- A new generic sentence (`link_lost`) for a link that went away
+  mid-session, used for `session` / `auth` / `transfer` / `finish` in place
+  of the per-stage "no response" ones when the failure is a
+  `SessionDropped`. The `disconnect` stage keeps its own: a drop the close
+  reported is the close failing, not the session.
+- The version is now single-sourced from `blesession.__version__`;
+  `pyproject.toml` reads it. Releases bump one line.
+
+### Testing
+
+- `blesession.hass` now has tests. It is the file most likely to break on a
+  habluetooth release and was the only one with no coverage, because
+  `homeassistant` is not a dependency; every function there imports it
+  inside the call, so a stub module in `sys.modules` exercises the lot
+  (`tests/test_hass.py`). 68 tests, coverage 96%.
 
 ## [0.1.0] — 2026-09-22
 
