@@ -5,6 +5,7 @@ import pytest
 from blesession import (
     AttemptTimedOut,
     ConnectFailed,
+    SessionReports,
     SessionTrace,
     Unreachable,
     ble_session,
@@ -217,3 +218,102 @@ def test_a_failure_that_only_says_so_in_words_keeps_its_sentence():
         operation="write", trace=trace, exc=RuntimeError("no response after part 3/40")
     )
     assert "stopped answering mid-transfer" in report["likely_cause"]
+
+
+def test_a_success_does_not_erase_the_last_failure():
+    """The user reading the failure sensor at 3 am has usually had a working
+    session since; that is the whole point of the second slot."""
+    reports = SessionReports()
+    assert reports.last is None and reports.last_failure is None
+
+    failed = reports.record(
+        build_report(operation="write", trace=SessionTrace(), exc=ConnectFailed("no slot"))
+    )
+    assert reports.last is failed and reports.last_failure is failed
+
+    ok = reports.record(build_report(operation="write", trace=SessionTrace()))
+    assert reports.last is ok
+    assert reports.last_failure is failed  # kept
+
+    reports.clear()
+    assert reports.last is None and reports.last_failure is None
+
+
+async def test_a_skipped_session_is_not_the_failure_to_keep():
+    """`success: False` with nothing tried must not overwrite the last real
+    failure with "the write lock was held"."""
+
+    async def attempt(a):
+        raise ConnectFailed("no slot")
+
+    reports = SessionReports()
+    failed = reports.record(report_attempt(await run_attempts(attempt), operation="write"))
+
+    async def never_runs(a):
+        raise AssertionError
+
+    skipped = await run_attempts(never_runs, guard=lambda: _declined())
+    reports.record(report_attempt(skipped, operation="write"))
+
+    assert reports.last["skipped"] == "write locked"
+    assert reports.last["success"] is False
+    assert reports.last_failure is failed
+
+
+async def _declined():
+    return "write locked"
+
+
+async def test_recording_only_the_returned_attempt_loses_the_failure_a_retry_hid(no_sleep):
+    """run_attempts() hands back the last attempt; an intermittent failure is
+    in the ones before it, which is the failure last_failure is for."""
+
+    async def attempt(a):
+        if a.number == 1:
+            with a.trace.timed("transfer"):
+                raise ConnectFailed("no slot")
+        return "ok"
+
+    per_attempt = SessionReports()
+    last = await run_attempts(
+        attempt,
+        max_attempts=2,
+        on_attempt=lambda a: per_attempt.record(report_attempt(a, operation="write", attempts=2)),
+    )
+
+    returned_only = SessionReports()
+    returned_only.record(report_attempt(last, operation="write", attempts=2))
+
+    assert last.ok
+    for reports in (per_attempt, returned_only):
+        assert reports.last["success"] is True and reports.last["attempt"] == 2
+    assert per_attempt.last_failure["attempt"] == 1
+    assert per_attempt.last_failure["failed_stage"] == "transfer"
+    assert returned_only.last_failure is None  # the whole point of on_attempt
+
+
+async def test_on_attempt_sees_a_declined_attempt_too(no_sleep):
+    """A guard that declined still has to reach the sensor: on_attempt is how
+    every attempt is recorded, and one it never sees cannot be published."""
+    lock = asyncio.Lock()
+    seen = []
+
+    async def attempt(a):
+        raise AssertionError("never runs")
+
+    async def guard():
+        assert lock.locked()
+        return "write locked"
+
+    reports = SessionReports()
+
+    def file_it(a):
+        assert not lock.locked()  # recording must not hold up other devices
+        seen.append(a.number)
+        reports.record(report_attempt(a, operation="write", attempts=3))
+
+    result = await run_attempts(attempt, lock=lock, guard=guard, max_attempts=3, on_attempt=file_it)
+    assert result.skipped == "write locked"
+    assert seen == [1]  # declined is not retried: the guard decided
+    assert reports.last["skipped"] == "write locked"
+    assert reports.last_failure is None

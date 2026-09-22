@@ -27,11 +27,11 @@ from .errors import (
 )
 from .link import LinkInfo, connected_via, is_proxy, probe_link
 from .notifications import STOP_NOTIFY_TIMEOUT_S, Notifications
-from .report import FACT_KEYS, build_report, report_attempt
+from .report import FACT_KEYS, SessionReports, build_report, report_attempt
 from .session import DISCONNECT_TIMEOUT_S, ble_session, dropped_event
 from .trace import SessionTrace, traced
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "DISCONNECT_TIMEOUT_S",
@@ -45,6 +45,7 @@ __all__ = [
     "NotificationTimeout",
     "Notifications",
     "SessionDropped",
+    "SessionReports",
     "SessionTrace",
     "Unreachable",
     "ble_session",

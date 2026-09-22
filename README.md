@@ -16,7 +16,7 @@ likely means**, ready to publish as sensor attributes so a failed session at
 
 ## Status
 
-**0.2.0.** Verified on device over a Bluetooth proxy. The library is tested
+**0.3.0.** Verified on device over a Bluetooth proxy. The library is tested
 without Home Assistant (`pytest`).
 Read [`docs/design.md`](docs/design.md) for what belongs here, what
 deliberately does not, how a Bluetooth-proxy route works without importing
@@ -46,10 +46,12 @@ Requires Python 3.13+. The core depends only on bleak / bleak-retry-connector;
 | `SessionTrace` | nested stage timings; the innermost stage an exception escaped from |
 | stage vocabulary | `unreachable · connect · session · auth · transfer · finish · disconnect`, plus a device `detail` |
 | `run_attempts()` | the lock-per-attempt / fresh-handle-per-attempt contract; policy stays yours |
+| `blesession.hass.ble_device_or_raise()` | the handle, resolved fresh inside the attempt, or `Unreachable` |
 | `blesession.hass.radio_facts()` | `via`, `via_type`, `rssi`, `paths`, `advertised_via` as scanner names |
 | `link.py` | the *one* place that probes bleak / habluetooth internals for the radio a link took |
 | `blesession.testing` | `FakeClient` / `fake_connect()` so every integration's tests fake bleak the same way |
 | `build_report()` | fixed attribute key order; generic likely-cause sentences, your device sentences first |
+| `SessionReports` | the last session and the last failure, so a success does not erase the evidence |
 | errors | `ConnectionError` subclasses so an off device never becomes a traceback |
 
 ## What it does not provide

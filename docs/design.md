@@ -1,6 +1,6 @@
 # blesession — design
 
-*Status: 0.2.0 — verified on device over a Bluetooth proxy. Written from
+*Status: 0.3.0 — verified on device over a Bluetooth proxy. Written from
 integrations that already have this instrumentation and a survey of ones
 that do not.*
 
@@ -54,9 +54,9 @@ blesession/
   link.py           LinkInfo, probe_link(), connected_via(), is_proxy()
   attempts.py       Attempt, run_attempts() — the lock/attempt contract
   causes.py         the generic likely-cause sentences
-  report.py         build_report(), report_attempt()
+  report.py         build_report(), report_attempt(), SessionReports
   const.py          option keys and defaults
-  hass.py           radio_facts() — imports homeassistant lazily
+  hass.py           ble_device_or_raise(), radio_facts() — homeassistant, lazily
   testing.py        FakeClient, FakeDevice, fake_connect() for integration tests
 ```
 
@@ -239,7 +239,8 @@ last = await run_attempts(
     pause_s=1.0,
     retry_if=default_retry_if,  # (Attempt) -> bool; default: not timed_out
     guard=None,                 # async () -> skip-value | None, run under the lock
-    on_attempt=None,            # (Attempt) -> None, after each one (log, record on a sensor)
+    on_attempt=None,            # (Attempt) -> None, after every one — failed,
+                                # successful, or declined — outside the lock
     stage_map=...,
 )
 ```
@@ -251,7 +252,28 @@ publish. `attempt.state` is a dict carried from one attempt to the next
 for pacing counters and the like. Whether a failure in stage X deserves
 pacing, a cooldown, or giving up is decided in `retry_if` and that state.
 
-### 7. Radio facts — `blesession.hass.radio_facts()`
+### 7. The device handle and the radios — `blesession.hass`
+
+#### `ble_device_or_raise(hass, address)`
+
+```python
+async def attempt(a):
+    device = ble_device_or_raise(hass, address)   # fresh, under the lock
+    async with ble_session(device, trace=a.trace) as client:
+        ...
+```
+
+Four lines every integration writes the same way, and the place two things
+are easy to get wrong. It resolves the handle **inside** the attempt: the
+handle carries the route a radio last advertised, and after a wait for the
+lock that route may be gone or may now be a different proxy (§6). And it
+**raises** rather than returning None, so "the device is asleep" arrives as
+an ordinary session failure — `Unreachable` is a `ConnectionError` carrying
+`stage="unreachable"`, so it reaches the report with a stage and a likely
+cause like everything else, instead of as an `if device is None` branch each
+integration words differently.
+
+#### `radio_facts(hass, address, link)`
 
 Integrations previously each probed the radio a different way. One function:
 
@@ -317,12 +339,37 @@ other way round — it does not fail the session, and is carried as the
 `disconnect_error` fact rather than being swallowed.
 
 Two sensor conventions, so troubleshooting docs can be shared across
-integrations:
+integrations, and `SessionReports` holds them:
+
+```python
+reports = SessionReports()
+
+def file_it(a):                       # every attempt, as it finishes
+    reports.record(report_attempt(a, operation="write", attempts=3, facts=facts))
+
+last = await run_attempts(attempt, max_attempts=3, on_attempt=file_it)
+reports.last           # on the duration / timestamp sensor
+reports.last_failure   # on the diagnostic sensor
+```
+
+Record from `on_attempt`, not from what `run_attempts()` returns: it hands
+back the **last** attempt only, so filing that one alone loses a first
+attempt that failed and a second that worked — exactly the intermittent
+failure the second slot exists to keep. `on_attempt` sees every attempt,
+including one a `guard` declined, so the rule above holds for whichever
+slot each one belongs in. Filing the returned attempt is right only when
+`last_failure` should mean "the last session that failed overall" rather
+than "the last attempt that failed".
 
 - **last session** — the most recent, success or failure, on the
   duration/timestamp sensor's attributes
 - **last failure** — kept until the next failure, so a success does not
-  erase the evidence
+  erase the evidence: the user who comes to read it has usually had a
+  working session since
+
+A session a `guard` declined is `last` but not `last_failure`. Nothing was
+tried, so it must not overwrite the last real failure with "the write lock
+was held" — the slot keys on `error`, not on `success`.
 
 ### 9. Generic likely-cause sentences — `causes.py`
 
@@ -389,7 +436,7 @@ roughly:
 - the protocol frames and the writer, using `Notifications` with `step=`
 - a stage table: device stage name → primary stage (often identity)
 - a `cause` callback with the device-specific sentences (may be empty)
-- the lock, the retry count, and the sensors that publish the report
+- the lock, the retry count, and the sensors that read `SessionReports`
 
 Around 50–80 lines beyond the protocol itself.
 
@@ -417,6 +464,15 @@ so a drop reaches the session the way it does on device.
 callback up. The
 library's own tests use nothing else, and an integration adopting the
 library can retire its own client mocks.
+
+`hass.py` is the exception, and the file most likely to break on a
+habluetooth release, so it is tested against a stub module planted in
+`sys.modules` (`tests/test_hass.py`). Every function there imports
+`homeassistant` inside the call, which is what makes that possible. The
+stub mirrors only the shapes `hass.py` relies on — two scanner base
+classes, a source id lookup, the strongest advertisement, the connectable
+scanners for an address — so when Home Assistant changes one of them, the
+fix is in `hass.py` and the stub moves with it.
 
 ## Decisions taken
 

@@ -1,17 +1,49 @@
-"""What only Home Assistant knows about a session: the radios.
+"""What only Home Assistant knows about a session: the device handle and the radios.
 
 Imported only from inside a running integration; `homeassistant` is not a
-dependency of this package.
+dependency of this package, so every function imports it lazily.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from bleak.backends.device import BLEDevice
+
+from .errors import Unreachable
 from .link import LinkInfo
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
+
+
+def ble_device_or_raise(
+    hass: HomeAssistant, address: str, *, connectable: bool = True
+) -> BLEDevice:
+    """The handle to connect with; raises `Unreachable` when no radio sees it.
+
+        async def attempt(a):
+            device = ble_device_or_raise(hass, address)   # fresh, under the lock
+            async with ble_session(device, trace=a.trace) as client:
+                ...
+
+    Resolve it **inside** the attempt, not when the job was queued: the
+    handle carries the route a radio last advertised, and after waiting for
+    the lock that route may be gone or may now be a different proxy
+    (docs/design.md §6).
+
+    Raising rather than returning None is what keeps "the device is asleep"
+    an ordinary session failure: `Unreachable` is a `ConnectionError` with
+    `stage="unreachable"`, so it reaches the report with a stage and a
+    likely cause like every other failure, instead of as an `if device is
+    None` branch each integration words differently.
+    """
+    from homeassistant.components.bluetooth import async_ble_device_from_address
+
+    device: BLEDevice | None = async_ble_device_from_address(hass, address, connectable=connectable)
+    if device is None:
+        raise Unreachable(address, connectable=connectable)
+    return device
 
 
 def radio_facts(hass: HomeAssistant, address: str, link: LinkInfo | None = None) -> dict[str, Any]:

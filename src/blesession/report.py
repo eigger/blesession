@@ -3,11 +3,15 @@
 Outcome first, then the radio, then the stage timings and facts, so the
 fields a reader looks at first are at the top of the attribute list, and
 the same keys mean the same thing on every integration.
+
+`SessionReports` holds the two slots those attributes go on: the last
+session, and the last one that failed.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from .attempts import Attempt
@@ -123,3 +127,55 @@ def report_attempt(
         attempt=attempt.number,
         attempts=attempts,
     )
+
+
+@dataclass
+class SessionReports:
+    """The two report slots an integration publishes, and the rule between them.
+
+        reports = SessionReports()
+        last = await run_attempts(attempt, max_attempts=3, on_attempt=file_it)
+        ...
+
+        # on the duration / timestamp sensor
+        return reports.last
+        # on the diagnostic sensor that must survive the next success
+        return reports.last_failure
+
+    **Record every attempt, not just the one `run_attempts()` returns.** It
+    hands back the *last* attempt only, so filing that one alone loses a
+    first attempt that failed and a second that worked — exactly the
+    intermittent failure `last_failure` exists to keep. Record from
+    `on_attempt`, which sees each attempt as it finishes:
+
+        def file_it(a):
+            reports.record(report_attempt(a, operation="write", attempts=3))
+
+    Filing the returned attempt instead is the right call only when you
+    want `last_failure` to mean "the last session that failed *overall*"
+    rather than "the last attempt that failed".
+
+    `last` is the most recent session, success or failure. `last_failure` is
+    the most recent one that actually failed, kept until the next failure —
+    a success must not erase the evidence, because the user who comes to
+    read it at 3 am has usually had a working session since.
+
+    A session a `guard` declined (`skipped`) is not a failure: nothing was
+    tried, so it becomes `last` but leaves `last_failure` alone rather than
+    overwriting the last real one with "the write lock was held".
+    """
+
+    last: dict[str, Any] | None = None
+    last_failure: dict[str, Any] | None = None
+
+    def record(self, report: dict[str, Any]) -> dict[str, Any]:
+        """File `report` in both slots as it belongs, and hand it back."""
+        self.last = report
+        if report.get("error") is not None:
+            self.last_failure = report
+        return report
+
+    def clear(self) -> None:
+        """Forget both (the device was removed, or the user reset it)."""
+        self.last = None
+        self.last_failure = None

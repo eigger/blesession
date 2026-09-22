@@ -10,6 +10,54 @@ Report keys (`failed_stage`, `likely_cause`, `via`, `<stage>_s`, …) and the
 primary stage names are part of the contract: troubleshooting docs quote
 them, so any change to them is at least a minor bump and is listed here.
 
+## [0.3.0] — 2026-09-22
+
+What every integration adopting the library would otherwise write the same
+way. Additive only: no existing key, stage or behaviour changes.
+
+### Added
+
+- `blesession.hass.ble_device_or_raise(hass, address)`: the handle to
+  connect with, or `Unreachable`. Resolving it inside the attempt (the
+  route a queued handle carries can be stale after the wait for the lock)
+  and raising rather than returning None (so an asleep device reaches the
+  report with a stage and a likely cause, not as an `if device is None`
+  branch worded differently in each integration) are the two things this
+  stops everyone getting subtly differently.
+- `Unreachable(address, connectable=False)`: wording only, for a handle
+  looked up with `connectable=False`. It was not refused for being
+  unconnectable, so the message no longer says no *connectable* radio saw
+  it. The default message is unchanged.
+- `SessionReports`: the two slots design §8 defines — `last` (any session)
+  and `last_failure` (kept until the next failure, so a success does not
+  erase the evidence). `record(report)` files a report in both as it
+  belongs and hands it back; `clear()` forgets both. A session a `guard`
+  declined becomes `last` but not `last_failure`: nothing was tried, so it
+  must not overwrite the last real failure — the slot keys on `error`,
+  not on `success`. Record from `run_attempts(on_attempt=...)`, not from
+  the attempt it returns: it hands back the last attempt only, so filing
+  that one alone loses a first attempt that failed and a second that
+  worked, which is the failure the second slot exists to keep.
+
+### Changed
+
+- **`run_attempts(on_attempt=...)` is now called for an attempt a `guard`
+  declined**, as it already was for a failed or successful one. It used to
+  return from inside the lock before reaching it, so the only way to see a
+  declined attempt was to inspect the returned one — which left the
+  recommended `on_attempt` recording unable to publish it at all, and
+  `SessionReports`' rule for a declined session (`last`, not
+  `last_failure`) unreachable through that path. It is still called
+  outside the lock, and a declined attempt is still not retried.
+
+### Testing
+
+- `blesession.hass` now has tests. It is the file most likely to break on a
+  habluetooth release and was the only one with no coverage, because
+  `homeassistant` is not a dependency; every function there imports it
+  inside the call, so a stub module in `sys.modules` exercises the lot
+  (`tests/test_hass.py`). Coverage of `hass.py` 0% → 100%, overall 90% → 96%.
+
 ## [0.2.0] — 2026-09-22
 
 A failed session now ends when the link ends, and says so. Every change
