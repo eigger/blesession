@@ -39,6 +39,17 @@ way. Additive only: no existing key, stage or behaviour changes.
   that one alone loses a first attempt that failed and a second that
   worked, which is the failure the second slot exists to keep.
 
+### Changed
+
+- **`run_attempts(on_attempt=...)` is now called for an attempt a `guard`
+  declined**, as it already was for a failed or successful one. It used to
+  return from inside the lock before reaching it, so the only way to see a
+  declined attempt was to inspect the returned one — which left the
+  recommended `on_attempt` recording unable to publish it at all, and
+  `SessionReports`' rule for a declined session (`last`, not
+  `last_failure`) unreachable through that path. It is still called
+  outside the lock, and a declined attempt is still not retried.
+
 ### Testing
 
 - `blesession.hass` now has tests. It is the file most likely to break on a

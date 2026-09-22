@@ -239,7 +239,8 @@ last = await run_attempts(
     pause_s=1.0,
     retry_if=default_retry_if,  # (Attempt) -> bool; default: not timed_out
     guard=None,                 # async () -> skip-value | None, run under the lock
-    on_attempt=None,            # (Attempt) -> None, after each one (log, record on a sensor)
+    on_attempt=None,            # (Attempt) -> None, after every one — failed,
+                                # successful, or declined — outside the lock
     stage_map=...,
 )
 ```
@@ -354,9 +355,11 @@ reports.last_failure   # on the diagnostic sensor
 Record from `on_attempt`, not from what `run_attempts()` returns: it hands
 back the **last** attempt only, so filing that one alone loses a first
 attempt that failed and a second that worked — exactly the intermittent
-failure the second slot exists to keep. Filing the returned attempt is
-right only when `last_failure` should mean "the last session that failed
-overall" rather than "the last attempt that failed".
+failure the second slot exists to keep. `on_attempt` sees every attempt,
+including one a `guard` declined, so the rule above holds for whichever
+slot each one belongs in. Filing the returned attempt is right only when
+`last_failure` should mean "the last session that failed overall" rather
+than "the last attempt that failed".
 
 - **last session** — the most recent, success or failure, on the
   duration/timestamp sensor's attributes

@@ -97,8 +97,11 @@ async def run_attempts[T](
 
     Never raises for a failed attempt: the returned Attempt carries the
     error, the trace and the stage, and the integration decides what to
-    raise or publish. `on_attempt` sees every attempt as it finishes (for
-    logging, or recording each one on a sensor).
+    raise or publish. `on_attempt` sees every attempt as it finishes — a
+    failed one, a successful one, and one a `guard` declined — outside the
+    lock, so recording it cannot hold up other devices. Only the last
+    attempt is returned, so `on_attempt` is the only way to record the
+    first attempt of a retry that went on to succeed.
 
     `attempt_fn` receives the Attempt (use `attempt.trace` for its stages
     and `attempt.state` for anything carried between attempts) and returns
@@ -113,35 +116,40 @@ async def run_attempts[T](
         async with lock if lock is not None else contextlib.nullcontext():
             if guard is not None and (skipped := await guard()) is not None:
                 attempt.skipped = skipped
-                return attempt
-            bound = asyncio.timeout(attempt_timeout_s)
-            try:
-                async with bound:
-                    attempt.result = await attempt_fn(attempt)
-            except Exception as exc:  # noqa: BLE001 - every failure is an attempt outcome
-                attempt.error = exc
-                if bound.expired():
-                    attempt.timed_out = True
-                    assert attempt_timeout_s is not None
-                    timed_out = AttemptTimedOut(
-                        attempt_timeout_s,
-                        stage=attempt.trace.failed_primary,
-                        detail=attempt.trace.failed_detail,
+            else:
+                bound = asyncio.timeout(attempt_timeout_s)
+                try:
+                    async with bound:
+                        attempt.result = await attempt_fn(attempt)
+                except Exception as exc:  # noqa: BLE001 - every failure is an attempt outcome
+                    attempt.error = exc
+                    if bound.expired():
+                        attempt.timed_out = True
+                        assert attempt_timeout_s is not None
+                        timed_out = AttemptTimedOut(
+                            attempt_timeout_s,
+                            stage=attempt.trace.failed_primary,
+                            detail=attempt.trace.failed_detail,
+                        )
+                        timed_out.__cause__ = exc
+                        attempt.error = timed_out
+                    _LOGGER.debug(
+                        "%s attempt %d/%d failed in %s: %s",
+                        name or "session",
+                        number,
+                        max_attempts,
+                        attempt.failed_stage or "?",
+                        attempt.error,
+                        exc_info=attempt.error,
                     )
-                    timed_out.__cause__ = exc
-                    attempt.error = timed_out
-                _LOGGER.debug(
-                    "%s attempt %d/%d failed in %s: %s",
-                    name or "session",
-                    number,
-                    max_attempts,
-                    attempt.failed_stage or "?",
-                    attempt.error,
-                    exc_info=attempt.error,
-                )
         state = attempt.state
+        # Outside the lock, and for a declined attempt too: `on_attempt` is
+        # how a caller records every attempt, and one it never sees is one
+        # that cannot be published.
         if on_attempt is not None:
             on_attempt(attempt)
+        if attempt.skipped is not None:
+            return attempt  # not retried: the guard decided, not the device
         if attempt.ok or number == max_attempts or not retry_if(attempt):
             return attempt
         # Lock released: other devices go first. Module-level `sleep` so an

@@ -290,3 +290,30 @@ async def test_recording_only_the_returned_attempt_loses_the_failure_a_retry_hid
     assert per_attempt.last_failure["attempt"] == 1
     assert per_attempt.last_failure["failed_stage"] == "transfer"
     assert returned_only.last_failure is None  # the whole point of on_attempt
+
+
+async def test_on_attempt_sees_a_declined_attempt_too(no_sleep):
+    """A guard that declined still has to reach the sensor: on_attempt is how
+    every attempt is recorded, and one it never sees cannot be published."""
+    lock = asyncio.Lock()
+    seen = []
+
+    async def attempt(a):
+        raise AssertionError("never runs")
+
+    async def guard():
+        assert lock.locked()
+        return "write locked"
+
+    reports = SessionReports()
+
+    def file_it(a):
+        assert not lock.locked()  # recording must not hold up other devices
+        seen.append(a.number)
+        reports.record(report_attempt(a, operation="write", attempts=3))
+
+    result = await run_attempts(attempt, lock=lock, guard=guard, max_attempts=3, on_attempt=file_it)
+    assert result.skipped == "write locked"
+    assert seen == [1]  # declined is not retried: the guard decided
+    assert reports.last["skipped"] == "write locked"
+    assert reports.last_failure is None
