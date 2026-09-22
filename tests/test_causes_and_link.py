@@ -87,3 +87,7 @@ def test_a_dropped_link_reads_as_a_drop_in_every_protocol_stage():
         assert sentence.endswith("add a proxy.")
     # The connect stage keeps its own reading; nothing dropped mid-session there.
     assert "could not be established" in generic_cause(stages.CONNECT, "no route", {}, noun="tag")
+    # Nor does the close: a drop it reports is the close failing, not the session.
+    assert "only the session close failed" in generic_cause(
+        stages.DISCONNECT, "link dropped", {}, noun="tag"
+    )

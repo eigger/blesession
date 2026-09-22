@@ -7,10 +7,12 @@ tag", "the cuff was not showing -P-") come from the integration's cause
 callback, which build_report() consults first; these fill in when it has
 nothing to say.
 
-The kind of failure is read from the exception where there is one, so an
-integration that words its own timeout (`NotificationTimeout(message=...)`)
-keeps the generic sentence; the error text is only the fallback for a caller
-that has no exception to hand.
+The kind of failure is read from the exception *and* from the error text,
+never from one or the other: the type carries an integration that worded
+its own timeout (`NotificationTimeout(message=...)`), and the text carries a
+failure that says the same thing without carrying the type. `build_report()`
+always has the exception to hand, so a text marker behind an
+"only when there is no exception" guard would never be read at all.
 """
 
 from __future__ import annotations
@@ -86,7 +88,9 @@ def generic_cause(
                 "the bond, otherwise a stale bond — pair again if it repeats."
             )
         return f"The BLE link could not be established.{where}"
-    if lost:
+    if lost and stage != stages.DISCONNECT:
+        # A drop the *close* reported is the close failing, not the session:
+        # the work was already done, and the stage below says so.
         return (
             f"The link to the {noun} went away mid-session: out of range, powered "
             f"down, or the adapter / proxy reset.{where}"
