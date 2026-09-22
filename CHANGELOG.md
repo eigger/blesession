@@ -24,13 +24,20 @@ way. Additive only: no existing key, stage or behaviour changes.
   report with a stage and a likely cause, not as an `if device is None`
   branch worded differently in each integration) are the two things this
   stops everyone getting subtly differently.
+- `Unreachable(address, connectable=False)`: wording only, for a handle
+  looked up with `connectable=False`. It was not refused for being
+  unconnectable, so the message no longer says no *connectable* radio saw
+  it. The default message is unchanged.
 - `SessionReports`: the two slots design §8 defines — `last` (any session)
   and `last_failure` (kept until the next failure, so a success does not
   erase the evidence). `record(report)` files a report in both as it
   belongs and hands it back; `clear()` forgets both. A session a `guard`
   declined becomes `last` but not `last_failure`: nothing was tried, so it
   must not overwrite the last real failure — the slot keys on `error`,
-  not on `success`.
+  not on `success`. Record from `run_attempts(on_attempt=...)`, not from
+  the attempt it returns: it hands back the last attempt only, so filing
+  that one alone loses a first attempt that failed and a second that
+  worked, which is the failure the second slot exists to keep.
 
 ### Testing
 

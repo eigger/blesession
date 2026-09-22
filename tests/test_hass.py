@@ -173,3 +173,18 @@ def test_ble_device_or_raise_is_how_an_asleep_device_becomes_a_session_failure(b
         ble_device_or_raise(object(), ADDRESS)
     assert info.value.stage == "unreachable"
     assert ADDRESS in str(info.value)
+
+
+def test_a_handle_asked_for_unconnectable_is_not_refused_for_being_unconnectable(bluetooth):
+    """Only the wording: saying no *connectable* radio saw it would name a
+    reason that was never asked about."""
+    from blesession.hass import ble_device_or_raise
+
+    bluetooth.device = None
+    with pytest.raises(Unreachable) as info:
+        ble_device_or_raise(object(), ADDRESS, connectable=False)
+    assert str(info.value).startswith(f"No radio sees {ADDRESS}")
+
+    with pytest.raises(Unreachable) as info:
+        ble_device_or_raise(object(), ADDRESS)
+    assert str(info.value).startswith(f"No connectable radio sees {ADDRESS}")

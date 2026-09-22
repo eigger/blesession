@@ -27,13 +27,18 @@ class BleSessionError(ConnectionError):
 
 
 class Unreachable(BleSessionError):
-    """No connectable radio currently sees the device."""
+    """No radio currently sees the device.
+
+    `connectable` is what was asked for, and only wording: a handle looked
+    up with `connectable=False` was not refused for being unconnectable, so
+    saying no *connectable* radio saw it would name the wrong reason.
+    """
 
     stage = stages.UNREACHABLE
 
-    def __init__(self, address: str) -> None:
+    def __init__(self, address: str, *, connectable: bool = True) -> None:
         super().__init__(
-            f"No connectable radio sees {address} "
+            f"No {'connectable radio' if connectable else 'radio'} sees {address} "
             "(out of range, asleep, or the adapter / proxy is down)"
         )
 

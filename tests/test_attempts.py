@@ -262,3 +262,31 @@ async def test_a_skipped_session_is_not_the_failure_to_keep():
 
 async def _declined():
     return "write locked"
+
+
+async def test_recording_only_the_returned_attempt_loses_the_failure_a_retry_hid(no_sleep):
+    """run_attempts() hands back the last attempt; an intermittent failure is
+    in the ones before it, which is the failure last_failure is for."""
+
+    async def attempt(a):
+        if a.number == 1:
+            with a.trace.timed("transfer"):
+                raise ConnectFailed("no slot")
+        return "ok"
+
+    per_attempt = SessionReports()
+    last = await run_attempts(
+        attempt,
+        max_attempts=2,
+        on_attempt=lambda a: per_attempt.record(report_attempt(a, operation="write", attempts=2)),
+    )
+
+    returned_only = SessionReports()
+    returned_only.record(report_attempt(last, operation="write", attempts=2))
+
+    assert last.ok
+    for reports in (per_attempt, returned_only):
+        assert reports.last["success"] is True and reports.last["attempt"] == 2
+    assert per_attempt.last_failure["attempt"] == 1
+    assert per_attempt.last_failure["failed_stage"] == "transfer"
+    assert returned_only.last_failure is None  # the whole point of on_attempt

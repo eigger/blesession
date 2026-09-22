@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 def ble_device_or_raise(
     hass: HomeAssistant, address: str, *, connectable: bool = True
 ) -> BLEDevice:
-    """The handle to connect with, or `Unreachable` when no radio sees the device.
+    """The handle to connect with; raises `Unreachable` when no radio sees it.
 
         async def attempt(a):
             device = ble_device_or_raise(hass, address)   # fresh, under the lock
@@ -42,7 +42,7 @@ def ble_device_or_raise(
 
     device: BLEDevice | None = async_ble_device_from_address(hass, address, connectable=connectable)
     if device is None:
-        raise Unreachable(address)
+        raise Unreachable(address, connectable=connectable)
     return device
 
 
