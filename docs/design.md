@@ -1,6 +1,6 @@
 # blesession — design
 
-*Status: 0.3.0 — verified on device over a Bluetooth proxy. Written from
+*Status: verified on device over a Bluetooth proxy. Written from
 integrations that already have this instrumentation and a survey of ones
 that do not.*
 
@@ -47,13 +47,14 @@ The library supplies **mechanism and vocabulary**; the integration supplies
 blesession/
   __init__.py       re-exports the public API
   session.py        ble_session(), current_client_class(), dropped_event()
+                    still_up()
   notifications.py  Notifications
   trace.py          SessionTrace, traced()
   stages.py         the fixed stage vocabulary, primary_of()
   errors.py         BleSessionError and subclasses
   link.py           LinkInfo, probe_link(), connected_via(), is_proxy()
   attempts.py       Attempt, run_attempts() — the lock/attempt contract
-  causes.py         the generic likely-cause sentences
+  causes.py         cause_key() and the CAUSES table it names
   report.py         build_report(), report_attempt(), SessionReports
   const.py          option keys and defaults
   hass.py           ble_device_or_raise(), radio_facts() — homeassistant, lazily
@@ -94,6 +95,7 @@ async with ble_session(
     ble_device,
     *,
     trace=None,              # SessionTrace; times "connect", "session" (the block), "disconnect"
+    client=None,             # a link a previous keep=True session left up
     settle_s=0.0,            # pause after connect before the first GATT op
     disconnect_timeout_s=10, # bound on the disconnect, outside the attempt bound
     keep=False,              # True: leave the link up (e.g. keep_connection)
@@ -124,7 +126,22 @@ Rules, all of which at least one integration currently gets differently:
 - The disconnect runs in `finally`, with its own timeout, and a disconnect
   failure never masks the original exception. It is logged at debug, not
   warning.
-- `keep=True` skips the disconnect; the caller owns the link.
+- `keep=True` skips the disconnect; the caller owns the link. `client=`
+  hands it back for the next session:
+
+  ```python
+  async with ble_session(device, client=self._client, keep=self._keep) as client:
+      self._client = client if self._keep else None
+  ```
+
+  A handle that went stale is ignored and a fresh link opened, so the
+  caller never checks. A reused link times no `connect` stage — there was
+  nothing to connect — and the trace notes `reused=True`, so a missing
+  `connect_s` reads as "there was none" rather than as a measurement that
+  went missing. It keeps the drop watch it already had. `settle_s`,
+  `close_stale` and the connect kwargs describe *opening* a link and are
+  not applied to one already up; `close_stale` in particular would have
+  killed the very link being reused.
 - The scanner the link went over is captured on the client right after
   connecting (see §7) so it is available even if the session dies later.
 
@@ -325,7 +342,8 @@ the attribute list:
 ```
 operation, success,
 skipped,                                                         # guard declined
-error, failed_stage, failed_detail, likely_cause, timed_out,     # failures only
+error, failed_stage, failed_detail,                              # failures only
+likely_cause, likely_cause_key, timed_out,
 attempt, attempts,
 via, via_type, rssi, paths, advertised_via,
 <stage>_s ...,                                                     # run order
@@ -373,7 +391,16 @@ was held" — the slot keys on `error`, not on `success`.
 
 ### 9. Generic likely-cause sentences — `causes.py`
 
-The generic sentences key on the primary stage and the error text, take the
+Two halves. `cause_key(stage, error, exc=...)` picks *which* reading a
+failure gets and returns a stable name for it; `CAUSES` maps that name to
+the English sentence, with `{noun}` and `{where}` filled in.
+`generic_cause()` is the pair rendered, and the report carries both — the
+sentence for a reader, the key so an integration can publish a Home
+Assistant translation instead. A key is part of the contract exactly as a
+stage name is. A sentence from the integration's own `cause` callback
+carries no key: it already owns that wording.
+
+The readings key on the primary stage and the kind of failure, take the
 noun as a parameter, and return `None` when they have nothing to say so the
 integration's own table takes over:
 
@@ -500,11 +527,13 @@ fix is in `hass.py` and the stub moves with it.
   pair-on-connect stay in each integration. If a second bonded device type
   appears, the connect-with-settle loop is the candidate to move here,
   behind `ble_session(settle_s=..., settle_attempts=...)`.
-- **Long-lived links.** Integrations that keep a client object and a
-  `keep_connection` option will show, when adopting `keep=True`, whether
-  the trace needs a notion of "this session reused an open link". There is
-  no way to run a session *on* a link `keep=True` left up yet
-  (`ble_session()` always connects); a `client=` argument is the candidate.
+- **Long-lived links.** `keep=True` leaves the link up and `client=` runs
+  the next session on it, with `reused=True` on the trace as the notion of
+  "this session reused an open link". What is still open is the *policy*
+  around it: when to give a kept link up (an idle timeout, a failure
+  count), which is the integration's, and whether a kept link needs its
+  own stage timings. The first integration with a `keep_connection` option
+  to adopt this answers both.
 - **Not planned.** Retry policy, pacing, cooldowns, advertisement parsing.
   If the same policy shows up in three integrations, it becomes a
   documented recipe here before it becomes code.

@@ -16,8 +16,8 @@ likely means**, ready to publish as sensor attributes so a failed session at
 
 ## Status
 
-**0.3.0.** Verified on device over a Bluetooth proxy. The library is tested
-without Home Assistant (`pytest`).
+Verified on device over a Bluetooth proxy. The library is tested without
+Home Assistant (`pytest`).
 Read [`docs/design.md`](docs/design.md) for what belongs here, what
 deliberately does not, how a Bluetooth-proxy route works without importing
 Home Assistant, and the rollout plan. See [`CHANGELOG.md`](CHANGELOG.md) for
@@ -41,7 +41,7 @@ Requires Python 3.13+. The core depends only on bleak / bleak-retry-connector;
 
 | piece | one line |
 |---|---|
-| `ble_session()` | connect inside the block, watch the link, bounded disconnect in `finally`, never masks the real error |
+| `ble_session()` | connect inside the block (or reuse a link left up), watch the link, bounded disconnect in `finally` |
 | `Notifications` | queued replies from one characteristic; every wait names its `step` and ends the moment the link drops |
 | `SessionTrace` | nested stage timings; the innermost stage an exception escaped from |
 | stage vocabulary | `unreachable · connect · session · auth · transfer · finish · disconnect`, plus a device `detail` |
@@ -50,7 +50,7 @@ Requires Python 3.13+. The core depends only on bleak / bleak-retry-connector;
 | `blesession.hass.radio_facts()` | `via`, `via_type`, `rssi`, `paths`, `advertised_via` as scanner names |
 | `link.py` | the *one* place that probes bleak / habluetooth internals for the radio a link took |
 | `blesession.testing` | `FakeClient` / `fake_connect()` so every integration's tests fake bleak the same way |
-| `build_report()` | fixed attribute key order; generic likely-cause sentences, your device sentences first |
+| `build_report()` | fixed attribute key order; generic likely-cause sentences with a translatable key, your device sentences first |
 | `SessionReports` | the last session and the last failure, so a success does not erase the evidence |
 | errors | `ConnectionError` subclasses so an off device never becomes a traceback |
 

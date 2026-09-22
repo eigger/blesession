@@ -317,3 +317,37 @@ async def test_on_attempt_sees_a_declined_attempt_too(no_sleep):
     assert seen == [1]  # declined is not retried: the guard decided
     assert reports.last["skipped"] == "write locked"
     assert reports.last_failure is None
+
+
+def test_only_a_sentence_this_library_wrote_carries_a_key():
+    """The key exists so an integration can translate the English sentence;
+    its own sentences it already owns, so those get none."""
+    facts = {"rssi": -90, "via": "office", "paths": 1}
+    trace = SessionTrace()
+    exc = ConnectFailed("no slot free")
+
+    generic = build_report(operation="write", trace=trace, exc=exc, facts=facts)
+    assert generic["likely_cause_key"] == "connect.no_slot"
+    assert list(generic)[:6] == [
+        "operation",
+        "success",
+        "error",
+        "failed_stage",
+        "likely_cause",
+        "likely_cause_key",
+    ]
+
+    own = build_report(
+        operation="write",
+        trace=trace,
+        exc=exc,
+        facts=facts,
+        cause=lambda stage, detail, error, f: "the printer is out of labels",
+    )
+    assert own["likely_cause"] == "the printer is out of labels"
+    assert "likely_cause_key" not in own
+
+
+def test_a_success_carries_no_cause_at_all():
+    report = build_report(operation="poll", trace=SessionTrace())
+    assert "likely_cause" not in report and "likely_cause_key" not in report

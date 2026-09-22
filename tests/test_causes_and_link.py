@@ -1,9 +1,11 @@
 from blesession import (
+    CAUSES,
     AttemptTimedOut,
     ConnectFailed,
     LinkInfo,
     NotificationTimeout,
     SessionDropped,
+    cause_key,
     connected_via,
     generic_cause,
     is_proxy,
@@ -91,3 +93,41 @@ def test_a_dropped_link_reads_as_a_drop_in_every_protocol_stage():
     assert "only the session close failed" in generic_cause(
         stages.DISCONNECT, "link dropped", {}, noun="tag"
     )
+
+
+def test_every_key_has_a_sentence_and_every_sentence_a_key():
+    """The two halves of the generic table are one contract; a key with no
+    sentence would be a KeyError in the middle of reporting a failure."""
+    reachable = {
+        cause_key(stage, error, exc=exc)
+        for stage in (None, "readout", *stages.ORDER)
+        for error, exc in (
+            ("", None),
+            ("no slot free", None),
+            ("dropped in settle", None),
+            ("no response within 5s", None),
+            ("the link dropped while waiting", None),
+            ("", AttemptTimedOut(5)),
+            ("", NotificationTimeout(5, step="x")),
+            ("", SessionDropped("gone")),
+            ("", ConnectFailed("x", detail="settle")),
+        )
+    }
+    assert reachable - {None} == set(CAUSES)
+
+
+def test_a_key_names_the_stage_and_the_reading():
+    assert cause_key(stages.CONNECT, "no slot free") == "connect.no_slot"
+    assert cause_key(stages.CONNECT, "dropped in settle") == "connect.settle"
+    assert cause_key(stages.CONNECT, "whatever") == "connect.failed"
+    assert cause_key(stages.AUTH, "no response") == "auth.no_answer"
+    assert cause_key(stages.AUTH, "device error 5") is None  # nothing generic to say
+    assert cause_key(stages.DISCONNECT, "link dropped") == "disconnect.close_failed"
+    assert cause_key("readout", "") is None  # an unmapped stage is not guessed at
+
+
+def test_the_sentence_is_the_key_rendered():
+    facts = {"rssi": -90, "via": "office", "paths": 1}
+    assert generic_cause(stages.AUTH, "no response", facts, noun="tag") == CAUSES[
+        "auth.no_answer"
+    ].format(noun="tag", where=placement(facts, noun="tag"))

@@ -64,12 +64,27 @@ def _watch_drops(client: Any, dropped: asyncio.Event) -> None:
         _DROPPED[client] = dropped
 
 
+def still_up(client: BleakClient | None) -> bool:
+    """True when a client handed back by a `keep=True` session can carry another.
+
+    `is_connected` alone is not the whole answer: the drop event this
+    module registered is the same callback the link has been reporting to
+    since it came up, so a link that went away between sessions is known
+    here even where `is_connected` has not caught up.
+    """
+    if client is None or not client.is_connected:
+        return False
+    dropped = dropped_event(client)
+    return dropped is None or not dropped.is_set()
+
+
 @contextlib.asynccontextmanager
 async def ble_session(
     ble_device: BLEDevice,
     *,
     trace: SessionTrace | None = None,
     name: str | None = None,
+    client: BleakClient | None = None,
     settle_s: float = 0.0,
     disconnect_timeout_s: float = DISCONNECT_TIMEOUT_S,
     keep: bool = False,
@@ -87,6 +102,16 @@ async def ble_session(
                    link; the block's own stages nest inside "session". A
                    disconnect that fails is noted as `disconnect_error`
                    rather than failing the session.
+    `client`       a link a previous `keep=True` session left up, to run this
+                   session on. It is used only if it is still up (see
+                   `still_up`); a stale one is ignored and a fresh link
+                   opened, so the caller never has to check. A reused link
+                   times no `connect` stage — there was nothing to connect —
+                   and the trace notes `reused=True` so a missing `connect_s`
+                   reads as "there was none" rather than as a measurement
+                   that went missing. `settle_s`, `close_stale` and the
+                   connect kwargs describe opening a link and are not applied
+                   to one already up.
     `settle_s`     pause after connecting before the first GATT operation, for
                    devices whose encryption settles after the L2CAP link is up;
                    a drop during the settle raises ConnectFailed(detail="settle")
@@ -102,6 +127,14 @@ async def ble_session(
 
     The link is watched for the whole session: `dropped_event(client)` is set
     the moment it goes, and `Notifications` waits on it (see SessionDropped).
+    A reused link keeps the watch it already had.
+
+    Keeping a link across sessions is two lines in the caller, and the stale
+    handle is this function's problem rather than theirs:
+
+        async with ble_session(device, client=self._client, keep=self._keep) as client:
+            self._client = client if self._keep else None
+            ...
 
     No Home Assistant import is needed for the link to go through a
     Bluetooth proxy: HA patches bleak's client class, and `ble_device` (from
@@ -109,7 +142,8 @@ async def ble_session(
     """
     trace = trace if trace is not None else SessionTrace()
     address = ble_device.address
-    client: BleakClient | None = None
+    reused = client if still_up(client) else None
+    client = reused
     dropped = asyncio.Event()
     caller_callback: Callable[[Any], None] | None = connect_kwargs.pop(
         "disconnected_callback", None
@@ -121,32 +155,37 @@ async def ble_session(
             caller_callback(disconnected)
 
     try:
-        with trace.timed(stages.CONNECT):
-            if close_stale:
-                await close_stale_connections_by_address(address)
-            client_class = connect_kwargs.pop("client_class", None) or current_client_class()
-            try:
-                client = await establish_connection(
-                    client_class,
-                    ble_device,
-                    name or address,
-                    disconnected_callback=on_disconnect,
-                    **connect_kwargs,
-                )
-            except ConnectFailed:
-                raise
-            except Exception as exc:
-                raise ConnectFailed(str(exc) or type(exc).__name__) from exc
-            # establish_connection builds the client once and retries
-            # connect() on it, so a failed attempt can already have fired
-            # the callback. The link in hand is up; anything before it was
-            # about a link that never was. Nothing awaits in between, so no
-            # real drop can be cleared here.
-            dropped.clear()
-            _watch_drops(client, dropped)
-            trace.link = probe_link(client, ble_device)
-            if settle_s:
-                await _settle(client, settle_s, dropped)
+        if reused is not None:
+            trace.note(reused=True)
+            trace.link = probe_link(reused, ble_device)
+        else:
+            with trace.timed(stages.CONNECT):
+                if close_stale:
+                    await close_stale_connections_by_address(address)
+                client_class = connect_kwargs.pop("client_class", None) or current_client_class()
+                try:
+                    client = await establish_connection(
+                        client_class,
+                        ble_device,
+                        name or address,
+                        disconnected_callback=on_disconnect,
+                        **connect_kwargs,
+                    )
+                except ConnectFailed:
+                    raise
+                except Exception as exc:
+                    raise ConnectFailed(str(exc) or type(exc).__name__) from exc
+                # establish_connection builds the client once and retries
+                # connect() on it, so a failed attempt can already have fired
+                # the callback. The link in hand is up; anything before it was
+                # about a link that never was. Nothing awaits in between, so no
+                # real drop can be cleared here.
+                dropped.clear()
+                _watch_drops(client, dropped)
+                trace.link = probe_link(client, ble_device)
+                if settle_s:
+                    await _settle(client, settle_s, dropped)
+        assert client is not None  # both branches above set it or raised
         with trace.timed(stages.SESSION):
             yield client
     finally:
