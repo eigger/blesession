@@ -241,3 +241,131 @@ async def test_dropping_an_already_dropped_link_does_nothing(client):
         c.drop()
     assert fired == [client]
     assert client.disconnects == 0  # nothing left to disconnect
+
+
+async def test_a_link_left_up_carries_the_next_session(client):
+    """keep=True hands the client back; passing it in again runs on it."""
+    async with ble_session(FakeDevice(), keep=True) as first:
+        pass
+
+    trace = SessionTrace()
+    async with ble_session(FakeDevice(), trace=trace, client=first, keep=True) as second:
+        assert second is first
+    assert client.disconnects == 0
+    assert trace.facts["reused"] is True
+    assert "connect" not in trace.timings  # there was nothing to connect
+    assert trace.link is not None  # still says which radio it went over
+    assert list(trace.timings) == ["session"]
+
+
+async def test_a_reused_link_is_still_closed_when_the_session_owns_it(client):
+    async with ble_session(FakeDevice(), keep=True) as first:
+        pass
+    async with ble_session(FakeDevice(), client=first, keep=False):
+        pass
+    assert client.disconnects == 1 and not client.is_connected
+
+
+async def test_a_stale_handle_is_ignored_rather_than_handed_to_the_caller(client, monkeypatch):
+    """The caller never has to check; a link that went away is reconnected."""
+    calls = []
+    monkeypatch.setattr(
+        session_mod, "close_stale_connections_by_address", lambda a: calls.append(a) or _noop()
+    )
+    async with ble_session(FakeDevice(), keep=True) as first:
+        pass
+    first.drop()  # the link went away between sessions
+
+    trace = SessionTrace()
+    async with ble_session(FakeDevice(), trace=trace, client=first, close_stale=True) as second:
+        assert second is client  # reconnected, not the dead handle
+    assert "reused" not in trace.facts
+    assert "connect" in trace.timings
+    assert calls == ["AA:BB:CC:DD:EE:FF"]
+
+
+async def test_close_stale_is_not_run_against_our_own_reused_link(client, monkeypatch):
+    """close_stale_connections_by_address would kill the very link we mean to use."""
+    calls = []
+    monkeypatch.setattr(
+        session_mod, "close_stale_connections_by_address", lambda a: calls.append(a) or _noop()
+    )
+    async with ble_session(FakeDevice(), keep=True) as first:
+        pass
+    async with ble_session(FakeDevice(), client=first, close_stale=True, keep=True):
+        pass
+    assert calls == []
+
+
+async def test_a_reused_link_keeps_the_watch_it_already_had(client):
+    """The drop event was registered when the link came up; a wait on the
+    second session must still end the moment it goes."""
+    async with ble_session(FakeDevice(), keep=True) as first:
+        pass
+
+    with pytest.raises(SessionDropped):
+        async with ble_session(FakeDevice(), client=first, keep=True) as second:
+            async with Notifications(second, "n") as replies:
+                asyncio.get_running_loop().call_soon(second.drop)
+                await replies.next(600, step="start")
+
+
+async def _noop():
+    return None
+
+
+def _two_links(monkeypatch):
+    """establish_connection handing out a different client each time."""
+    clients = [FakeClient(), FakeClient()]
+    handing = iter(clients)
+
+    async def connect(_cls, _device, _name, disconnected_callback=None, **_kwargs):
+        nxt = next(handing)
+        nxt.disconnected_callback = disconnected_callback
+        return nxt
+
+    monkeypatch.setattr(session_mod, "establish_connection", connect)
+    return clients
+
+
+async def test_a_handle_turned_down_while_still_open_is_closed_not_abandoned(monkeypatch):
+    """The drop callback arriving before is_connected catches up is the whole
+    reason still_up() looks at both. The caller is about to overwrite its
+    reference, so an abandoned link would hold a proxy slot for nothing."""
+    first, second = _two_links(monkeypatch)
+    async with ble_session(FakeDevice(), keep=True) as opened:
+        assert opened is first
+    first.disconnected_callback(first)  # the callback beat is_connected
+    assert first.is_connected
+
+    trace = SessionTrace()
+    async with ble_session(FakeDevice(), trace=trace, client=first, keep=True) as reused:
+        assert reused is second  # turned down, a fresh link opened
+    assert first.disconnects == 1 and not first.is_connected  # and closed on the way
+    assert second.disconnects == 0  # keep=True
+    assert "stale_close_error" not in trace.facts
+
+
+async def test_closing_a_turned_down_handle_cannot_fail_the_session(monkeypatch):
+    first, second = _two_links(monkeypatch)
+    async with ble_session(FakeDevice(), keep=True):
+        pass
+    first.disconnected_callback(first)
+    first.fail_disconnect = OSError("the proxy is gone")
+
+    trace = SessionTrace()
+    async with ble_session(FakeDevice(), trace=trace, client=first, keep=True) as reused:
+        assert reused is second
+    assert trace.facts["stale_close_error"] == "the proxy is gone"
+    assert trace.failed_stage is None  # a close that failed is not the session failing
+
+
+async def test_an_already_dropped_handle_has_nothing_to_close(monkeypatch):
+    first, second = _two_links(monkeypatch)
+    async with ble_session(FakeDevice(), keep=True):
+        pass
+    first.drop()
+
+    async with ble_session(FakeDevice(), client=first, keep=True) as reused:
+        assert reused is second
+    assert first.disconnects == 0

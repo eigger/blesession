@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .attempts import Attempt
-from .causes import generic_cause
+from .causes import cause_key, generic_cause
 from .errors import AttemptTimedOut, error_text
 from .trace import SessionTrace
 
@@ -45,7 +45,8 @@ def build_report(
 
         operation, success,
         skipped,                                                       # guard declined
-        error, failed_stage, failed_detail, likely_cause, timed_out,   # failures
+        error, failed_stage, failed_detail,                            # failures
+        likely_cause, likely_cause_key, timed_out,
         attempt, attempts,
         via, via_type, rssi, paths, advertised_via,
         <stage>_s ...,                                                 # run order
@@ -53,6 +54,16 @@ def build_report(
 
     `failed_stage` / `failed_detail` default to `trace.failure(exc)` — the
     trace first, then what the error itself carries; pass them to override.
+
+    `likely_cause_key` is the stable name for a sentence this library wrote
+    (see `blesession.causes.CAUSES`), so an integration can publish its own
+    translation instead of the English one. A sentence from `cause` — the
+    integration's own — carries no key: it already owns the wording.
+
+    The key names the sentence, not the whole string: several sentences end
+    in the weak-signal placement advice, which is English as well. A
+    translation rebuilds that from `rssi`, `via` and `paths`, which are in
+    the report beside the key, rather than translating the fragment.
 
     `skipped` is what a `run_attempts()` guard returned when it declined to
     run the attempt at all. Nothing was tried, so the session did not
@@ -72,6 +83,7 @@ def build_report(
             stage = failed_stage
         if failed_detail is not None:
             detail = failed_detail
+        generic_key = cause_key(stage, error, exc=exc)
         report["error"] = error
         if stage is not None:
             report["failed_stage"] = stage
@@ -79,15 +91,21 @@ def build_report(
             report["failed_detail"] = detail
         # The attempt bound is the library's own mechanism, so its sentence
         # wins; for everything else the device's reading comes first.
-        likely = None
+        likely: str | None = None
+        likely_key: str | None = None
         if isinstance(exc, AttemptTimedOut):
-            likely = generic_cause(stage, error, facts, exc=exc, noun=noun)
+            likely, likely_key = generic_cause(stage, error, facts, exc=exc, noun=noun), generic_key
         if likely is None and cause is not None:
             likely = cause(stage, detail, error, facts)
         if likely is None:
-            likely = generic_cause(stage, error, facts, exc=exc, noun=noun)
+            likely, likely_key = generic_cause(stage, error, facts, exc=exc, noun=noun), generic_key
         if likely is not None:
             report["likely_cause"] = likely
+        # Only a sentence this library wrote gets a key. A device sentence
+        # comes from the integration, which can translate its own without
+        # being handed a name for it.
+        if likely_key is not None:
+            report["likely_cause_key"] = likely_key
         if isinstance(exc, AttemptTimedOut):
             report["timed_out"] = True
     if attempt is not None:

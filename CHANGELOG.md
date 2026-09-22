@@ -6,9 +6,46 @@ All notable changes to blesession. The format follows
 a behaviour change, and every such change is listed under **Changed** with the
 old and new behaviour.
 
-Report keys (`failed_stage`, `likely_cause`, `via`, `<stage>_s`, …) and the
-primary stage names are part of the contract: troubleshooting docs quote
-them, so any change to them is at least a minor bump and is listed here.
+Report keys (`failed_stage`, `likely_cause`, `via`, `<stage>_s`, …), the
+primary stage names and the `likely_cause_key` names are part of the
+contract: troubleshooting docs quote them and integrations translate them,
+so any change to them is at least a minor bump and is listed here.
+
+## [Unreleased]
+
+### Added
+
+- `ble_session(client=...)`: run a session on a link a previous `keep=True`
+  session left up. It is used only if it is still up, so the caller never
+  has to check a stale handle; otherwise a fresh link is opened and handed
+  back as usual. A reused link times no `connect` stage and the trace notes
+  `reused=True`, so a missing `connect_s` reads as "there was none" rather
+  than as a measurement that went missing. It keeps the drop watch it
+  already had, so a `Notifications` wait on it still ends the moment the
+  link goes. `settle_s`, `close_stale` and the connect kwargs describe
+  opening a link and are not applied to one already up — `close_stale` in
+  particular would have killed the very link being reused.
+- `still_up(client)`, the check behind it. A handle it turns down that is
+  somehow still open (the drop callback arrived before `is_connected`
+  caught up, which is why the check looks at both) is closed under the
+  disconnect bound before the fresh link is opened, and a close that fails
+  is noted as `stale_close_error`. The caller is about to overwrite its
+  reference with the client handed back, so an abandoned link would hold a
+  proxy's connection slot until something else noticed.
+- `likely_cause_key` on the report: the stable name of the generic sentence
+  (`connect.no_slot`, `auth.no_answer`, `link_lost`, …), so an integration
+  can publish a Home Assistant translation instead of the English text.
+  Only a sentence this library wrote carries one; a sentence from the
+  integration's own `cause` callback does not, because it already owns the
+  wording. The key names the sentence, not the whole string: several
+  sentences end in the weak-signal placement advice, which a translation
+  rebuilds from `rssi`, `via` and `paths` — already in the report beside
+  the key — rather than translating that fragment.
+- `blesession.causes.CAUSES`, the key -> sentence table, and `cause_key()`,
+  which picks the key. `generic_cause()` is now that pair rendered, with
+  its signature and every sentence unchanged. A test holds the two halves
+  of the table to each other, so a key can never be returned without a
+  sentence to go with it.
 
 ## [0.3.0] — 2026-09-22
 
