@@ -25,13 +25,22 @@ so any change to them is at least a minor bump and is listed here.
   link goes. `settle_s`, `close_stale` and the connect kwargs describe
   opening a link and are not applied to one already up — `close_stale` in
   particular would have killed the very link being reused.
-- `still_up(client)`, the check behind it.
+- `still_up(client)`, the check behind it. A handle it turns down that is
+  somehow still open (the drop callback arrived before `is_connected`
+  caught up, which is why the check looks at both) is closed under the
+  disconnect bound before the fresh link is opened, and a close that fails
+  is noted as `stale_close_error`. The caller is about to overwrite its
+  reference with the client handed back, so an abandoned link would hold a
+  proxy's connection slot until something else noticed.
 - `likely_cause_key` on the report: the stable name of the generic sentence
   (`connect.no_slot`, `auth.no_answer`, `link_lost`, …), so an integration
   can publish a Home Assistant translation instead of the English text.
   Only a sentence this library wrote carries one; a sentence from the
   integration's own `cause` callback does not, because it already owns the
-  wording.
+  wording. The key names the sentence, not the whole string: several
+  sentences end in the weak-signal placement advice, which a translation
+  rebuilds from `rssi`, `via` and `paths` — already in the report beside
+  the key — rather than translating that fragment.
 - `blesession.causes.CAUSES`, the key -> sentence table, and `cause_key()`,
   which picks the key. `generic_cause()` is now that pair rendered, with
   its signature and every sentence unchanged. A test holds the two halves

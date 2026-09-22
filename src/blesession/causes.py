@@ -128,9 +128,12 @@ CAUSES: dict[str, str] = {
 }
 """Every key `cause_key()` can return, and the English sentence for it.
 
-`{noun}` is what the integration calls the device and `{where}` the
-placement advice, which is empty unless the signal is actually weak. A
-translation keys on the same names.
+`{noun}` is what the integration calls the device. `{where}` is the
+placement advice, empty unless the signal is actually weak — and English
+too, so a translation does not translate that fragment: it rebuilds the
+advice from `rssi`, `via` and `paths`, which the report already carries,
+under the same `rssi <= WEAK_RSSI_DBM` and `paths == 1` rules `placement()`
+uses.
 """
 
 

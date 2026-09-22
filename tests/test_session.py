@@ -312,3 +312,60 @@ async def test_a_reused_link_keeps_the_watch_it_already_had(client):
 
 async def _noop():
     return None
+
+
+def _two_links(monkeypatch):
+    """establish_connection handing out a different client each time."""
+    clients = [FakeClient(), FakeClient()]
+    handing = iter(clients)
+
+    async def connect(_cls, _device, _name, disconnected_callback=None, **_kwargs):
+        nxt = next(handing)
+        nxt.disconnected_callback = disconnected_callback
+        return nxt
+
+    monkeypatch.setattr(session_mod, "establish_connection", connect)
+    return clients
+
+
+async def test_a_handle_turned_down_while_still_open_is_closed_not_abandoned(monkeypatch):
+    """The drop callback arriving before is_connected catches up is the whole
+    reason still_up() looks at both. The caller is about to overwrite its
+    reference, so an abandoned link would hold a proxy slot for nothing."""
+    first, second = _two_links(monkeypatch)
+    async with ble_session(FakeDevice(), keep=True) as opened:
+        assert opened is first
+    first.disconnected_callback(first)  # the callback beat is_connected
+    assert first.is_connected
+
+    trace = SessionTrace()
+    async with ble_session(FakeDevice(), trace=trace, client=first, keep=True) as reused:
+        assert reused is second  # turned down, a fresh link opened
+    assert first.disconnects == 1 and not first.is_connected  # and closed on the way
+    assert second.disconnects == 0  # keep=True
+    assert "stale_close_error" not in trace.facts
+
+
+async def test_closing_a_turned_down_handle_cannot_fail_the_session(monkeypatch):
+    first, second = _two_links(monkeypatch)
+    async with ble_session(FakeDevice(), keep=True):
+        pass
+    first.disconnected_callback(first)
+    first.fail_disconnect = OSError("the proxy is gone")
+
+    trace = SessionTrace()
+    async with ble_session(FakeDevice(), trace=trace, client=first, keep=True) as reused:
+        assert reused is second
+    assert trace.facts["stale_close_error"] == "the proxy is gone"
+    assert trace.failed_stage is None  # a close that failed is not the session failing
+
+
+async def test_an_already_dropped_handle_has_nothing_to_close(monkeypatch):
+    first, second = _two_links(monkeypatch)
+    async with ble_session(FakeDevice(), keep=True):
+        pass
+    first.drop()
+
+    async with ble_session(FakeDevice(), client=first, keep=True) as reused:
+        assert reused is second
+    assert first.disconnects == 0

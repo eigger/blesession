@@ -60,6 +60,11 @@ def build_report(
     translation instead of the English one. A sentence from `cause` — the
     integration's own — carries no key: it already owns the wording.
 
+    The key names the sentence, not the whole string: several sentences end
+    in the weak-signal placement advice, which is English as well. A
+    translation rebuilds that from `rssi`, `via` and `paths`, which are in
+    the report beside the key, rather than translating the fragment.
+
     `skipped` is what a `run_attempts()` guard returned when it declined to
     run the attempt at all. Nothing was tried, so the session did not
     succeed: `success` is False and there is no `error` to go with it.

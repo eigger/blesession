@@ -135,7 +135,9 @@ Rules, all of which at least one integration currently gets differently:
   ```
 
   A handle that went stale is ignored and a fresh link opened, so the
-  caller never checks. A reused link times no `connect` stage — there was
+  caller never checks — and if that handle is somehow still open, it is
+  closed first, under the disconnect bound, rather than abandoned holding
+  a proxy slot the caller no longer has a reference to. A reused link times no `connect` stage — there was
   nothing to connect — and the trace notes `reused=True`, so a missing
   `connect_s` reads as "there was none" rather than as a measurement that
   went missing. It keeps the drop watch it already had. `settle_s`,
@@ -399,6 +401,13 @@ sentence for a reader, the key so an integration can publish a Home
 Assistant translation instead. A key is part of the contract exactly as a
 stage name is. A sentence from the integration's own `cause` callback
 carries no key: it already owns that wording.
+
+The key names the *sentence*, not the whole string. Several sentences end
+in `{where}`, the weak-signal placement advice, which is English too — a
+translation rebuilds it from `rssi`, `via` and `paths`, which sit in the
+report beside the key, under the same `rssi <= -85` and `paths == 1` rules
+`placement()` uses. Translating a fragment out of a rendered sentence is
+what the key exists to avoid.
 
 The readings key on the primary stage and the kind of failure, take the
 noun as a parameter, and return `None` when they have nothing to say so the

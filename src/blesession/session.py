@@ -143,6 +143,11 @@ async def ble_session(
     trace = trace if trace is not None else SessionTrace()
     address = ble_device.address
     reused = client if still_up(client) else None
+    # A handle `still_up` turned down but that is somehow still open is this
+    # function's to close, not the caller's: they are about to overwrite
+    # their reference with the client we hand back, and an abandoned link
+    # holds a proxy's connection slot until something else notices.
+    turned_down = client if reused is None and client is not None and client.is_connected else None
     client = reused
     dropped = asyncio.Event()
     caller_callback: Callable[[Any], None] | None = connect_kwargs.pop(
@@ -160,6 +165,8 @@ async def ble_session(
             trace.link = probe_link(reused, ble_device)
         else:
             with trace.timed(stages.CONNECT):
+                if turned_down is not None:
+                    await _close(turned_down, disconnect_timeout_s, address, trace, "stale_close")
                 if close_stale:
                     await close_stale_connections_by_address(address)
                 client_class = connect_kwargs.pop("client_class", None) or current_client_class()
@@ -191,15 +198,24 @@ async def ble_session(
     finally:
         if client is not None and not keep and client.is_connected:
             with trace.timed(stages.DISCONNECT):
-                try:
-                    async with asyncio.timeout(disconnect_timeout_s):
-                        await client.disconnect()
-                except Exception as exc:  # noqa: BLE001 - never mask the session's error
-                    # The work was done; only the close failed. Kept as a
-                    # fact rather than a failure so it reaches the report
-                    # instead of disappearing (see docs/design.md §3).
-                    _LOGGER.debug("Disconnect from %s failed (ignored): %s", address, exc)
-                    trace.note(disconnect_error=error_text(exc))
+                await _close(client, disconnect_timeout_s, address, trace, "disconnect")
+
+
+async def _close(
+    client: BleakClient, timeout_s: float, address: str, trace: SessionTrace, fact: str
+) -> None:
+    """Disconnect under a bound, never raising.
+
+    A close that fails must not mask what the session was doing — the work
+    was done; only the close failed — but it is worth a `<fact>_error` on
+    the report rather than disappearing (see docs/design.md §3).
+    """
+    try:
+        async with asyncio.timeout(timeout_s):
+            await client.disconnect()
+    except Exception as exc:  # noqa: BLE001 - never mask the session's error
+        _LOGGER.debug("Disconnect from %s failed (ignored): %s", address, exc)
+        trace.note(**{f"{fact}_error": error_text(exc)})
 
 
 async def _settle(client: BleakClient, settle_s: float, dropped: asyncio.Event) -> None:
