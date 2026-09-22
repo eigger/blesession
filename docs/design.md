@@ -340,12 +340,16 @@ integration's own table takes over:
 - attempt deadline → the BLE stack stopped answering; restart adapter/proxy
 - `disconnect` → the work was done; only the close failed
 
-The sentences key on the **exception type** where there is one
+The sentences read the **exception type** where there is one
 (`NotificationTimeout`, `SessionDropped`, `ConnectFailed(detail="settle")`,
 `AttemptTimedOut`), so an integration that words its own message keeps
-them; the English error text is only the fallback for a caller with no
-exception to hand, and for markers no exception type carries (a proxy's
-"no slot free").
+them. The English error-text markers sit beside those checks rather than
+behind them — `isinstance(...) or "no response" in err`, never either/or —
+because `build_report()` always has the exception, so a fallback that only
+ran without one would never run at all, and a failure that says "no
+response" without carrying the type would silently lose its sentence.
+Some markers have no type to go with them at all (a proxy's "no slot
+free").
 
 Device sentences stay in the integration's `cause` callback, which runs
 first.

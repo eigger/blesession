@@ -204,3 +204,16 @@ async def test_a_skipped_attempt_is_not_a_success():
     assert report["success"] is False
     assert report["skipped"] == "write locked"
     assert "error" not in report and "likely_cause" not in report
+
+
+def test_a_failure_that_only_says_so_in_words_keeps_its_sentence():
+    """build_report() always has the exception, so a type check alone would
+    silently retire the text markers on the one path that matters."""
+    trace = SessionTrace()
+    with pytest.raises(RuntimeError):
+        with trace.timed("transfer"):
+            raise RuntimeError("no response after part 3/40")
+    report = build_report(
+        operation="write", trace=trace, exc=RuntimeError("no response after part 3/40")
+    )
+    assert "stopped answering mid-transfer" in report["likely_cause"]

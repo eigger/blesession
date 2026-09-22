@@ -82,7 +82,13 @@ class FakeClient:
 
     def drop(self) -> None:
         """The link went away: is_connected goes False and the disconnect
-        callback fires, so a wait on the link ends the way it does on device."""
+        callback fires, so a wait on the link ends the way it does on device.
+
+        Dropping an already dropped link does nothing; bleak calls the
+        callback once per link.
+        """
+        if not self.is_connected:
+            return
         self.is_connected = False
         if self.disconnected_callback is not None:
             self.disconnected_callback(self)

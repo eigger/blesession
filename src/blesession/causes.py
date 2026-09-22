@@ -56,10 +56,12 @@ def generic_cause(
     """
     err = error.lower()
     where = placement(facts, noun=noun)
-    # Structural first; the text markers are the fallback for a caller with
-    # no exception to hand.
-    unanswered = isinstance(exc, NotificationTimeout) or (exc is None and "no response" in err)
-    lost = isinstance(exc, SessionDropped) or (exc is None and "link dropped" in err)
+    # The type first, so a NotificationTimeout an integration worded itself
+    # still reads as one; the text marker stays beside it, so a failure that
+    # says as much without carrying the type keeps its sentence too. Both,
+    # never either — as the `settle` branch below does it.
+    unanswered = isinstance(exc, NotificationTimeout) or "no response" in err
+    lost = isinstance(exc, SessionDropped) or "link dropped" in err
     if isinstance(exc, AttemptTimedOut):
         return (
             "The BLE stack stopped answering mid-session and the attempt was cut at "

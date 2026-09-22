@@ -32,7 +32,8 @@ timeout out, and two failures used to disappear from the report entirely.
 - `build_report(skipped=...)`, filled in by `report_attempt()` from
   `Attempt.skipped`.
 - `blesession.testing`: `FakeClient.disconnected_callback`, fired by `drop()`
-  and `disconnect()` as bleak does, and wired up by `fake_connect()`.
+  and `disconnect()` as bleak does — once per link — and wired up by
+  `fake_connect()`.
 
 ### Changed
 
@@ -45,12 +46,14 @@ timeout out, and two failures used to disappear from the report entirely.
   report. It still does not fail the session. The `trace.forgive()` call
   that used to follow it was unreachable and is gone; `forgive()` itself is
   unchanged.
-- **`likely_cause` is keyed on the exception, not on its wording.** A
+- **`likely_cause` reads the exception as well as its wording.** A
   `NotificationTimeout` gives the "did not answer" sentence and a
   `ConnectFailed(detail="settle")` the bond-settle sentence even when the
-  integration worded the message itself (`NotificationTimeout(message=...)`);
-  previously both were matched on the English error text, which is still the
-  fallback when there is no exception to read.
+  integration worded the message itself (`NotificationTimeout(message=...)`),
+  which the English text markers alone could not do. Those markers stay
+  beside the type checks, so a failure that says as much without carrying
+  the type keeps the sentence it had in 0.1.0. This is purely additive:
+  no failure that had a generic sentence loses it.
 - A new generic sentence for a link that went away mid-session, used for
   `session` / `auth` / `transfer` / `finish` in place of the per-stage
   "no response" ones when the failure is a `SessionDropped`.

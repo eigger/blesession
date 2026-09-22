@@ -231,3 +231,13 @@ async def test_a_drop_from_a_failed_connect_retry_does_not_poison_the_session(mo
         async with Notifications(c, "n") as replies:
             c.reply(b"\x01")
             assert await replies.next(1, step="start") == b"\x01"
+
+
+async def test_dropping_an_already_dropped_link_does_nothing(client):
+    """bleak calls the disconnect callback once per link; so does the fake."""
+    fired = []
+    async with ble_session(FakeDevice(), disconnected_callback=fired.append) as c:
+        c.drop()
+        c.drop()
+    assert fired == [client]
+    assert client.disconnects == 0  # nothing left to disconnect
