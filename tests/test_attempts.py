@@ -186,3 +186,21 @@ async def test_direct_report_and_attempt_report_agree_on_the_detail(no_sleep):
     for report in (via_attempt, direct):
         assert (report["failed_stage"], report["failed_detail"]) == ("connect", "settle")
         assert "before encryption settled" in report["likely_cause"]
+
+
+async def test_a_skipped_attempt_is_not_a_success():
+    """A guard that declined means nothing was tried; the report must not
+    read as a session that worked."""
+
+    async def attempt(a):
+        raise AssertionError("never runs")
+
+    async def guard():
+        return "write locked"
+
+    result = await run_attempts(attempt, guard=guard)
+    report = report_attempt(result, operation="write", attempts=3)
+    assert list(report)[:3] == ["operation", "success", "skipped"]
+    assert report["success"] is False
+    assert report["skipped"] == "write locked"
+    assert "error" not in report and "likely_cause" not in report

@@ -1,11 +1,16 @@
 """One sentence on what a failed session most likely means — the generic part.
 
-Read from where it died (the primary stage), the error text and the radio
-situation. Best effort: the report keeps the exact `error` beside it. A
-device's own sentences ("the tag rejected authentication: not a WOLINK
+Read from where it died (the primary stage), what kind of failure it was and
+the radio situation. Best effort: the report keeps the exact `error` beside
+it. A device's own sentences ("the tag rejected authentication: not a WOLINK
 tag", "the cuff was not showing -P-") come from the integration's cause
 callback, which build_report() consults first; these fill in when it has
 nothing to say.
+
+The kind of failure is read from the exception where there is one, so an
+integration that words its own timeout (`NotificationTimeout(message=...)`)
+keeps the generic sentence; the error text is only the fallback for a caller
+that has no exception to hand.
 """
 
 from __future__ import annotations
@@ -14,7 +19,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from . import stages
-from .errors import AttemptTimedOut
+from .errors import AttemptTimedOut, NotificationTimeout, SessionDropped
 
 WEAK_RSSI_DBM = -85
 """At or below this the placement advice is worth giving; above it the radio
@@ -46,11 +51,15 @@ def generic_cause(
 ) -> str | None:
     """The generic sentence for a failure, or None when there is none.
 
-    Keyed on the primary stage and a few error-text markers that every
-    transport produces the same way.
+    Keyed on the primary stage and the kind of failure: the attempt bound,
+    a link that dropped, a step that went unanswered.
     """
     err = error.lower()
     where = placement(facts, noun=noun)
+    # Structural first; the text markers are the fallback for a caller with
+    # no exception to hand.
+    unanswered = isinstance(exc, NotificationTimeout) or (exc is None and "no response" in err)
+    lost = isinstance(exc, SessionDropped) or (exc is None and "link dropped" in err)
     if isinstance(exc, AttemptTimedOut):
         return (
             "The BLE stack stopped answering mid-session and the attempt was cut at "
@@ -68,13 +77,18 @@ def generic_cause(
                 "The proxy has no free connection slot; add a proxy or reduce the "
                 "BLE devices it serves."
             )
-        if "settle" in err:
+        if getattr(exc, "detail", None) == "settle" or "settle" in err:
             return (
                 f"The {noun} accepted the link and dropped it before encryption "
                 "settled: on a multi-proxy setup usually a proxy that does not hold "
                 "the bond, otherwise a stale bond — pair again if it repeats."
             )
         return f"The BLE link could not be established.{where}"
+    if lost:
+        return (
+            f"The link to the {noun} went away mid-session: out of range, powered "
+            f"down, or the adapter / proxy reset.{where}"
+        )
     if stage == stages.SESSION:
         return (
             f"Connected, but the {noun} dropped or refused the session before the "
@@ -82,17 +96,17 @@ def generic_cause(
             "— if it repeats, the protocol or model may not match."
         )
     if stage == stages.AUTH:
-        if "no response" in err:
+        if unanswered:
             return (
                 f"The {noun} did not answer the handshake: not ready, or the link dropped.{where}"
             )
         return None
     if stage == stages.TRANSFER:
-        if "no response" in err:
+        if unanswered:
             return f"The {noun} stopped answering mid-transfer: link dropped or reset.{where}"
         return None
     if stage == stages.FINISH:
-        if "no response" in err:
+        if unanswered:
             return f"The {noun} took the data but did not report completion in time.{where}"
         return None
     if stage == stages.DISCONNECT:

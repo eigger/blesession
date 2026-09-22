@@ -10,6 +10,51 @@ Report keys (`failed_stage`, `likely_cause`, `via`, `<stage>_s`, …) and the
 primary stage names are part of the contract: troubleshooting docs quote
 them, so any change to them is at least a minor bump and is listed here.
 
+## [0.2.0] — 2026-09-22
+
+A failed session now ends when the link ends, and says so. Every change
+here is about the same thing: a dead link used to be found out by waiting a
+timeout out, and two failures used to disappear from the report entirely.
+
+### Added
+
+- `SessionDropped` is now actually raised. `ble_session()` watches the link
+  for the whole session (it passes its own `disconnected_callback` to
+  `establish_connection`, chaining yours if you pass one), and every
+  `Notifications` wait on that client ends the moment the link goes instead
+  of running its step timeout out. A notification that arrived before the
+  drop is still delivered first. `dropped_event(client)` exposes the event;
+  `Notifications(..., dropped=...)` takes one for a connection you own.
+- `STOP_NOTIFY_TIMEOUT_S` (5s), a bound on the unsubscribe in
+  `Notifications.__aexit__`. It runs *after* an attempt bound has fired, so
+  nothing else bounded it: a proxy that stopped answering could hang there
+  holding the lock — the one thing the attempt bound exists to prevent.
+- `build_report(skipped=...)`, filled in by `report_attempt()` from
+  `Attempt.skipped`.
+- `blesession.testing`: `FakeClient.disconnected_callback`, fired by `drop()`
+  and `disconnect()` as bleak does, and wired up by `fake_connect()`.
+
+### Changed
+
+- **`report_attempt()` on an attempt a `guard` declined**: was
+  `success: True` (nothing had raised), now `success: False` with a
+  `skipped` key carrying what the guard returned. Nothing was tried, so the
+  session did not succeed.
+- **A disconnect that fails after a successful session**: was swallowed and
+  lost, now noted as a `disconnect_error` fact on the trace and so on the
+  report. It still does not fail the session. The `trace.forgive()` call
+  that used to follow it was unreachable and is gone; `forgive()` itself is
+  unchanged.
+- **`likely_cause` is keyed on the exception, not on its wording.** A
+  `NotificationTimeout` gives the "did not answer" sentence and a
+  `ConnectFailed(detail="settle")` the bond-settle sentence even when the
+  integration worded the message itself (`NotificationTimeout(message=...)`);
+  previously both were matched on the English error text, which is still the
+  fallback when there is no exception to read.
+- A new generic sentence for a link that went away mid-session, used for
+  `session` / `auth` / `transfer` / `finish` in place of the per-stage
+  "no response" ones when the failure is a `SessionDropped`.
+
 ## [0.1.0] — 2026-09-22
 
 First release. Same code as 0.1.0a2, verified on device over a Bluetooth

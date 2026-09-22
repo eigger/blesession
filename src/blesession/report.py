@@ -28,6 +28,7 @@ def build_report(
     operation: str,
     trace: SessionTrace,
     exc: BaseException | None = None,
+    skipped: Any = None,
     facts: Mapping[str, Any] | None = None,
     cause: Cause | None = None,
     noun: str = "device",
@@ -39,6 +40,7 @@ def build_report(
     """Assemble the attributes for one finished session.
 
         operation, success,
+        skipped,                                                       # guard declined
         error, failed_stage, failed_detail, likely_cause, timed_out,   # failures
         attempt, attempts,
         via, via_type, rssi, paths, advertised_via,
@@ -47,9 +49,18 @@ def build_report(
 
     `failed_stage` / `failed_detail` default to `trace.failure(exc)` — the
     trace first, then what the error itself carries; pass them to override.
+
+    `skipped` is what a `run_attempts()` guard returned when it declined to
+    run the attempt at all. Nothing was tried, so the session did not
+    succeed: `success` is False and there is no `error` to go with it.
     """
     facts = dict(facts or {})
-    report: dict[str, Any] = {"operation": operation, "success": exc is None}
+    report: dict[str, Any] = {
+        "operation": operation,
+        "success": exc is None and skipped is None,
+    }
+    if skipped is not None:
+        report["skipped"] = skipped
     if exc is not None:
         error = error_text(exc)
         stage, detail = trace.failure(exc)
@@ -105,6 +116,7 @@ def report_attempt(
         operation=operation,
         trace=attempt.trace,
         exc=attempt.error,
+        skipped=attempt.skipped,
         facts=facts,
         cause=cause,
         noun=noun,

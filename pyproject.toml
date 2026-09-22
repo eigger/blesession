@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blesession"
-version = "0.1.0"
+version = "0.2.0"
 description = "One BLE session, instrumented: connect, notifications, stage timings, where it failed and why — for Home Assistant BLE integrations."
 readme = "README.md"
 requires-python = ">=3.13"
