@@ -9,7 +9,7 @@ interpretation of the replies is protocol-specific.
 from __future__ import annotations
 
 import asyncio
-import contextlib
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -18,10 +18,12 @@ from bleak import BleakClient
 from .errors import NotificationTimeout, SessionDropped
 from .session import dropped_event
 
+_LOGGER = logging.getLogger(__name__)
+
 STOP_NOTIFY_TIMEOUT_S = 5.0
-"""Bound on the unsubscribe. It runs in `__aexit__`, which is *after* an
-attempt bound has fired, so it is the one wait nothing else bounds: a proxy
-that stopped answering would otherwise hang here holding the lock."""
+"""Bound on the unsubscribe. It runs in `__aexit__`; once an attempt bound
+has fired (it cancels only once) nothing else bounds it, so a proxy that
+stopped answering would otherwise hang here holding the lock."""
 
 
 class Notifications:
@@ -67,10 +69,12 @@ class Notifications:
     async def __aexit__(self, *exc_info: Any) -> None:
         # Never let an unsubscribe failure on a dropped link mask the
         # original error; ble_session() still disconnects.
-        with contextlib.suppress(Exception):
+        try:
             if self._client.is_connected:
                 async with asyncio.timeout(STOP_NOTIFY_TIMEOUT_S):
                     await self._client.stop_notify(self._characteristic)
+        except Exception as exc:  # noqa: BLE001 - never mask the session's error
+            _LOGGER.debug("stop_notify on %s failed (ignored): %s", self._characteristic, exc)
 
     def _on_notify(self, _sender: Any, data: bytearray) -> None:
         self._queue.put_nowait(bytes(data))

@@ -101,7 +101,7 @@ async with ble_session(
     trace=None,              # SessionTrace; times "connect", "session" (the block), "disconnect"
     client=None,             # a link a previous keep=True session left up
     settle_s=0.0,            # pause after connect before the first GATT op
-    disconnect_timeout_s=10, # bound on the disconnect, outside the attempt bound
+    disconnect_timeout_s=10, # own bound on the disconnect (still inside the attempt bound)
     keep=False,              # True: leave the link up (e.g. keep_connection)
     close_stale=False,       # bleak_retry_connector.close_stale_connections_by_address first
     **connect_kwargs,        # use_services_cache, pair, ... -> establish_connection
@@ -177,8 +177,8 @@ async with Notifications(client, NOTIFY_UUID, settle=0.5) as replies:
 - `wait_for(accept)` lets `accept` raise to turn an error frame into the
   session's failure.
 - `__aexit__` unsubscribes and ignores a failure on a dropped link, under
-  its own `STOP_NOTIFY_TIMEOUT_S` bound — it runs *after* an attempt bound
-  has fired, so it is the one wait nothing else bounds (§5).
+  its own `STOP_NOTIFY_TIMEOUT_S` bound — it runs in the attempt's scope, and after an attempt
+  bound has fired it has nothing but this one (§5).
 - Multi-channel protocols open one `Notifications` per characteristic. A
   handle-indexed dispatcher is out of scope.
 
@@ -226,12 +226,15 @@ present are retired in favour of this; a transfer-specific flag becomes
 |--------------|-----------------------------------------------|---------------------------------|
 | step         | one notification wait                         | protocol code, via `Notifications` |
 | attempt      | one try, connecting included                  | `run_attempts()`, value from the integration |
-| disconnect   | the close, *outside* the attempt bound        | `ble_session()`                 |
-| unsubscribe  | `stop_notify`, also outside the attempt bound | `Notifications` (`STOP_NOTIFY_TIMEOUT_S`) |
+| disconnect   | the close, with its own bound, inside the attempt bound | `ble_session()` |
+| unsubscribe  | `stop_notify`, with its own bound, inside the attempt bound | `Notifications` (`STOP_NOTIFY_TIMEOUT_S`) |
 
-The last two are the waits that run in `finally` / `__aexit__`, i.e. after
-the attempt bound has already fired. Anything unbounded there hangs the
-lock exactly as the bound was meant to prevent, so both have their own.
+The last two run in `finally` / `__aexit__`, in the attempt's own scope. The
+attempt bound cancels only once: when it already fired in the body, these two
+run with nothing but their own bound, and anything unbounded there would hang
+the lock exactly as the bound was meant to prevent. When it fires *during*
+the close instead, the block's result is discarded and the report reads
+`disconnect.timed_out` (the work was done), with `timed_out=True`.
 
 The attempt bound exists because a GATT write has no timeout of its own: a
 proxy that dies mid-transfer leaves the attempt hanging, and if it holds a
@@ -425,6 +428,8 @@ integration's own table takes over:
   repeats, the model/profile may not match
 - a `SessionDropped` in any protocol stage → the link went away mid-session
 - attempt deadline → the BLE stack stopped answering; restart adapter/proxy
+- attempt deadline *during* `disconnect` → the work was done but the result
+  was discarded; the close hung (`disconnect.timed_out`)
 - `disconnect` → the work was done; only the close failed
 
 The sentences read the **exception type** where there is one
