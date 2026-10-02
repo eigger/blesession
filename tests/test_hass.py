@@ -189,3 +189,13 @@ def test_a_handle_asked_for_unconnectable_is_not_refused_for_being_unconnectable
     with pytest.raises(Unreachable) as info:
         ble_device_or_raise(object(), ADDRESS)
     assert str(info.value).startswith(f"No connectable radio sees {ADDRESS}")
+
+
+def test_a_link_whose_route_is_unknown_falls_back_and_says_so(bluetooth, radio_facts):
+    bluetooth.scanners = {"office": StubProxy("office-proxy", rssi=-88)}
+    bluetooth.strongest = types.SimpleNamespace(source="office")
+
+    facts = radio_facts(LinkInfo(via="/org/bluez/hci9/dev_X"))
+
+    assert facts["via"] == "office-proxy"
+    assert facts["via_unconfirmed"] is True

@@ -11,7 +11,7 @@ primary stage names and the `likely_cause_key` names are part of the
 contract: troubleshooting docs quote them and integrations translate them,
 so any change to them is at least a minor bump and is listed here.
 
-## [0.2.1] — 2026-10-02
+## [0.3.0] — 2026-10-02
 
 Two diagnostics that misled when a connect failed.
 
@@ -24,10 +24,11 @@ Two diagnostics that misled when a connect failed.
 
 ### Added
 
-- `radio_facts()` reports `via_unconfirmed: True` when the session never
-  connected. `via` then is the radio that heard the device best, which is not
-  necessarily one the connect went through; before, it read as the path that
-  failed. Nothing else about `via` changes.
+- `radio_facts()` reports `via_unconfirmed: True` when `via` could not be
+  resolved from the link — no link, or a route habluetooth does not know. `via`
+  then is the radio that heard the device best, not necessarily one the
+  connect went through; before, it read as the path that failed. A new report
+  key, hence the minor bump; nothing else about `via` changes.
 
 ## [0.2.0] — 2026-09-22
 

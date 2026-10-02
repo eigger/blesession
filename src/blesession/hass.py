@@ -52,9 +52,10 @@ def radio_facts(hass: HomeAssistant, address: str, link: LinkInfo | None = None)
         via             the radio the link took (scanner name), when knowable;
                         else the scanner holding the strongest advertisement,
                         which is the one the client wrapper tries first
-        via_unconfirmed True when there was no link (the connect failed), so
-                        `via` is only the radio that heard the device best;
-                        absent otherwise
+        via_unconfirmed True when `via` could not be resolved from the link
+                        (no link, or a route habluetooth does not know), so it
+                        is only the radio that heard the device best; absent
+                        when `via` is the radio the link took
         via_type        "proxy" | "adapter"
         rssi            as seen by that radio
         paths           connectable radios that currently see the device;
@@ -85,9 +86,8 @@ def radio_facts(hass: HomeAssistant, address: str, link: LinkInfo | None = None)
     if advertised is None:
         info = async_last_service_info(hass, address, connectable=True)
         advertised = async_scanner_by_source(hass, info.source) if info else None
-    connected = scanner_for(link.via if link else None) or advertised
-    # No link means the connect failed, so `via` below is only the radio that
-    # heard the tag best — not necessarily one the connect went through.
+    took = scanner_for(link.via if link else None)
+    connected = took or advertised
 
     facts: dict[str, Any] = {}
     if connected is not None:
@@ -96,7 +96,9 @@ def radio_facts(hass: HomeAssistant, address: str, link: LinkInfo | None = None)
     elif link is not None and link.via:
         # A BlueZ D-Bus path or an id habluetooth does not know: still worth showing.
         facts["via"] = str(link.via)
-    if link is None and "via" in facts:
+    # `via` is the radio that heard the tag best, not one the link is known to
+    # have taken, whenever `took` could not be resolved to a scanner.
+    if connected is not None and took is None:
         facts["via_unconfirmed"] = True
     rssi_scanner = connected or advertised
     if rssi_scanner is not None:
