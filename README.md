@@ -49,7 +49,7 @@ Requires Python 3.13+. The core depends only on bleak / bleak-retry-connector;
 | stage vocabulary | `unreachable · connect · session · auth · transfer · finish · disconnect`, plus a device `detail` |
 | `run_attempts()` | the lock-per-attempt / fresh-handle-per-attempt contract; policy stays yours |
 | `blesession.hass.ble_device_or_raise()` | the handle, resolved fresh inside the attempt, or `Unreachable` |
-| `blesession.hass.radio_facts()` | `via`, `via_type`, `rssi`, `paths`, `advertised_via` as scanner names |
+| `blesession.hass.radio_facts()` | `via`, `via_type`, `rssi`, `paths`, `advertised_via` as scanner names, and `via_unconfirmed` (a flag) |
 | `link.py` | the *one* place that probes bleak / habluetooth internals for the radio a link took |
 | `blesession.testing` | `FakeClient` / `fake_connect()` so every integration's tests fake bleak the same way |
 | `build_report()` | fixed attribute key order; generic likely-cause sentences with a translatable key, your device sentences first |

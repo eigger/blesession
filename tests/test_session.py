@@ -50,6 +50,29 @@ async def test_connect_failure_becomes_connect_failed_with_stage(monkeypatch):
     assert "session" not in trace.timings
 
 
+async def test_connect_failed_message_does_not_repeat_the_address(monkeypatch):
+    address = FakeDevice().address
+    monkeypatch.setattr(
+        session_mod,
+        "establish_connection",
+        fake_connect(fail=OSError(f"{address} - {address}: Failed to connect after 4 attempt(s)")),
+    )
+    with pytest.raises(ConnectFailed) as info:
+        async with ble_session(FakeDevice()):
+            pass
+    assert str(info.value) == f"{address}: Failed to connect after 4 attempt(s)"
+
+
+async def test_connect_failed_keeps_a_device_name(monkeypatch):
+    address = FakeDevice().address
+    message = f"Tag1 - {address}: Failed to connect after 4 attempt(s)"
+    monkeypatch.setattr(session_mod, "establish_connection", fake_connect(fail=OSError(message)))
+    with pytest.raises(ConnectFailed) as info:
+        async with ble_session(FakeDevice(), name="Tag1"):
+            pass
+    assert str(info.value) == message
+
+
 async def test_body_failure_keeps_inner_stage_and_disconnect_failure_is_ignored(client):
     client.fail_disconnect = OSError("gone")
     trace = SessionTrace()

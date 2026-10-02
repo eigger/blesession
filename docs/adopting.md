@@ -18,7 +18,7 @@ retry.
 
 ```json
 {
-  "requirements": ["blesession==0.2.0"]
+  "requirements": ["blesession==0.3.0"]
 }
 ```
 
@@ -209,6 +209,7 @@ Everything a session can put on a sensor, in the order it appears:
 | `rssi` | radio known | as that radio saw the device |
 | `paths` | always with facts | connectable radios that see it; `1` means no failover |
 | `advertised_via` | only when it differs | the loudest scanner, when the link took another |
+| `via_unconfirmed` | `via` not resolved from the link | `True`: no link (no connect, or one that failed) or a route habluetooth does not know, so `via` is only the loudest scanner |
 | `connect_s`, `session_s`, `disconnect_s` | timed | seconds, in the order stages finished |
 | `unlock_s`, `readout_s`, … | timed | your own stages, same rule |
 | `reused` | `client=` reuse | the link was already up; there was no connect |

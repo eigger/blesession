@@ -23,7 +23,14 @@ Cause = Callable[[str | None, str | None, str, Mapping[str, Any]], str | None]
 """(primary stage, detail, error text, radio facts) -> the device's own
 sentence, or None to fall back to the generic one."""
 
-FACT_KEYS: tuple[str, ...] = ("via", "via_type", "rssi", "paths", "advertised_via")
+FACT_KEYS: tuple[str, ...] = (
+    "via",
+    "via_type",
+    "rssi",
+    "paths",
+    "advertised_via",
+    "via_unconfirmed",
+)
 """Radio facts, in report order (see blesession.hass.radio_facts)."""
 
 
