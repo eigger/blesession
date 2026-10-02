@@ -13,6 +13,14 @@ so any change to them is at least a minor bump and is listed here.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-03
+
+Two timing and delivery bugs, and a close that hung no longer reads as a dead stack.
+
+### Added
+
+- `likely_cause_key` `disconnect.timed_out` (see Fixed).
+
 ### Fixed
 
 - Stage timings no longer round on every addition: a stage recorded many
