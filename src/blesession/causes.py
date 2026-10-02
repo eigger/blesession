@@ -60,9 +60,10 @@ def cause_key(stage: str | None, error: str, *, exc: BaseException | None = None
     unanswered = isinstance(exc, NotificationTimeout) or "no response" in err
     lost = isinstance(exc, SessionDropped) or "link dropped" in err
     if isinstance(exc, AttemptTimedOut):
-        # The bound fired while the close ran: the work was already done.
+        # The bound fired while the close ran: the work was done, but the
+        # cancellation took the block's result with it.
         if stage == stages.DISCONNECT:
-            return "disconnect.close_failed"
+            return "disconnect.timed_out"
         return "attempt_timed_out"
     if stage == stages.UNREACHABLE:
         return "unreachable"
@@ -124,6 +125,11 @@ CAUSES: dict[str, str] = {
         "The {noun} stopped answering mid-transfer: link dropped or reset.{where}"
     ),
     "finish.no_answer": ("The {noun} took the data but did not report completion in time.{where}"),
+    "disconnect.timed_out": (
+        "The work was done, but the attempt bound fired while the link was "
+        "being closed, so the result was discarded. The close is slow: a "
+        "proxy or adapter that is hanging."
+    ),
     "disconnect.close_failed": (
         "The work was done; only the session close failed. "
         "Harmless unless the next connection is refused."

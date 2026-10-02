@@ -21,9 +21,9 @@ from .session import dropped_event
 _LOGGER = logging.getLogger(__name__)
 
 STOP_NOTIFY_TIMEOUT_S = 5.0
-"""Bound on the unsubscribe. It runs in `__aexit__`, which is *after* an
-attempt bound has fired, so it is the one wait nothing else bounds: a proxy
-that stopped answering would otherwise hang here holding the lock."""
+"""Bound on the unsubscribe. It runs in `__aexit__`; once an attempt bound
+has fired (it cancels only once) nothing else bounds it, so a proxy that
+stopped answering would otherwise hang here holding the lock."""
 
 
 class Notifications:

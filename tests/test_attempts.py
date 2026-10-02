@@ -367,5 +367,5 @@ async def test_a_bound_that_fires_during_the_close_is_read_as_the_close_failing(
     assert isinstance(result.error, AttemptTimedOut)
     report = report_attempt(result, operation="print")
     assert report["failed_stage"] == stages.DISCONNECT
-    assert report["likely_cause_key"] == "disconnect.close_failed"
+    assert report["likely_cause_key"] == "disconnect.timed_out"
     assert report["timed_out"] is True

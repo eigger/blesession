@@ -22,10 +22,12 @@ so any change to them is at least a minor bump and is listed here.
 - A notification taken off the queue just as the step's timeout fired is
   kept for the next wait instead of being dropped.
 - An attempt bound that fires while `ble_session` is closing the link is now
-  reported as `disconnect.close_failed` (`failed_stage=disconnect`) rather than
-  `attempt_timed_out`: the work was already done, and "the BLE stack stopped
-  answering mid-session… restart the adapter" was the wrong advice. `timed_out`
-  stays True. The docs said the close ran outside the attempt bound; it runs
+  reported as the new `likely_cause_key` `disconnect.timed_out`
+  (`failed_stage=disconnect`) rather than `attempt_timed_out`: the work was
+  already done, and "the BLE stack stopped answering mid-session… restart the
+  adapter" was the wrong advice. The block's result is still discarded, and
+  the sentence says so. `timed_out` stays True. A new key: a minor bump at
+  release. The docs said the close ran outside the attempt bound; it runs
   inside it (with its own bound), and now say so.
 - A `stop_notify` failure or timeout in `Notifications` leaves a debug log line
   instead of vanishing.

@@ -203,7 +203,7 @@ Everything a session can put on a sensor, in the order it appears:
 | `failed_detail` | failure | *your* stage name, when it differs (`unlock`) |
 | `likely_cause` | usually | one sentence: yours first, then the generic one |
 | `likely_cause_key` | generic sentences | the stable name (`connect.no_slot`), for a translation |
-| `timed_out` | attempt bound fired | the transport died, not the device |
+| `timed_out` | attempt bound fired | the transport died, not the device (with `failed_stage=disconnect`: the close hung, the work was done) |
 | `attempt` / `attempts` | via `report_attempt` | which try, out of how many |
 | `via` / `via_type` | radio known | the radio the link **took**, `proxy` or `adapter` |
 | `rssi` | radio known | as that radio saw the device |
