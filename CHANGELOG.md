@@ -11,6 +11,24 @@ primary stage names and the `likely_cause_key` names are part of the
 contract: troubleshooting docs quote them and integrations translate them,
 so any change to them is at least a minor bump and is listed here.
 
+## [0.2.1] — 2026-10-02
+
+Two diagnostics that misled when a connect failed.
+
+### Fixed
+
+- A failed connect's message no longer repeats the address
+  (`AA:BB - AA:BB: Failed to connect…` is now `AA:BB: Failed to connect…`);
+  bleak_retry_connector words it `<name> - <address>` and the name defaults to
+  the address.
+
+### Added
+
+- `radio_facts()` reports `via_unconfirmed: True` when the session never
+  connected. `via` then is the radio that heard the device best, which is not
+  necessarily one the connect went through; before, it read as the path that
+  failed. Nothing else about `via` changes.
+
 ## [0.2.0] — 2026-09-22
 
 A failed session now ends when the link ends and says so, a link can

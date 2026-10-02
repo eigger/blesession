@@ -127,6 +127,7 @@ def test_a_session_that_never_connected_falls_back_to_the_advertisement(bluetoot
 
     assert radio_facts() == {
         "via": "office-proxy",
+        "via_unconfirmed": True,
         "via_type": "proxy",
         "rssi": -88,
         "paths": 1,

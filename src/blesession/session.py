@@ -181,7 +181,7 @@ async def ble_session(
                 except ConnectFailed:
                     raise
                 except Exception as exc:
-                    raise ConnectFailed(str(exc) or type(exc).__name__) from exc
+                    raise ConnectFailed(_tidy(str(exc), address) or type(exc).__name__) from exc
                 # establish_connection builds the client once and retries
                 # connect() on it, so a failed attempt can already have fired
                 # the callback. The link in hand is up; anything before it was
@@ -199,6 +199,15 @@ async def ble_session(
         if client is not None and not keep and client.is_connected:
             with trace.timed(stages.DISCONNECT):
                 await _close(client, disconnect_timeout_s, address, trace, "disconnect")
+
+
+def _tidy(message: str, address: str) -> str:
+    """Drop the doubled address bleak_retry_connector puts in its errors.
+
+    It words them `<name> - <address>: ...`, and the name defaults to the
+    address, so an unnamed device reads `AA:BB - AA:BB: Failed to connect`.
+    """
+    return message.replace(f"{address} - {address}:", f"{address}:", 1)
 
 
 async def _close(
