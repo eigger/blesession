@@ -115,6 +115,11 @@ class Notifications:
         except TimeoutError as exc:
             raise NotificationTimeout(timeout, step=step) from exc
 
+    def _requeue_first(self, data: bytes) -> None:
+        rest = self.clear()
+        for item in (data, *rest):
+            self._queue.put_nowait(item)
+
     async def _next(self, step: str) -> bytes:
         """The next queued notification, or SessionDropped once the link goes.
 
@@ -128,9 +133,11 @@ class Notifications:
         if not self._dropped.is_set():
             get = asyncio.ensure_future(self._queue.get())
             drop = asyncio.ensure_future(self._dropped.wait())
+            delivered = False
             try:
                 await asyncio.wait({get, drop}, return_when=asyncio.FIRST_COMPLETED)
                 if get.done():
+                    delivered = True
                     return get.result()
             finally:
                 drop.cancel()
@@ -138,4 +145,9 @@ class Notifications:
                     # Queue.get() hands a cancelled getter on to the next
                     # waiter, so a notification that landed is not lost.
                     get.cancel()
+                elif not delivered and not get.cancelled() and get.exception() is None:
+                    # The step's timeout fired between the queue handing
+                    # over a frame and this wait resuming: put it back
+                    # rather than lose a reply that did arrive.
+                    self._requeue_first(get.result())
         raise SessionDropped(f"The link dropped while waiting for {step}", detail=step)

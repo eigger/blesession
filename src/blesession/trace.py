@@ -69,12 +69,12 @@ class SessionTrace:
             raise
         finally:
             self._stack.pop()
-            self._timings[name] = round(self._timings.get(name, 0.0) + perf_counter() - started, 3)
+            self._timings[name] = self._timings.get(name, 0.0) + perf_counter() - started
 
     def record(self, name: str, seconds: float) -> None:
         """Add a stage measured elsewhere (a session handed over from another
         owner, a test double standing in for a writer)."""
-        self._timings[name] = round(self._timings.get(name, 0.0) + seconds, 3)
+        self._timings[name] = self._timings.get(name, 0.0) + seconds
 
     def fail(self, name: str) -> None:
         """Record a failure in a stage that reported it by return value.
@@ -142,7 +142,7 @@ class SessionTrace:
     @property
     def timings(self) -> dict[str, float]:
         """Seconds per stage, in the order the stages finished."""
-        return dict(self._timings)
+        return {name: round(seconds, 3) for name, seconds in self._timings.items()}
 
     def as_dict(self) -> dict[str, Any]:
         """The failed stage (if any), the facts, then each stage's seconds as
@@ -150,7 +150,7 @@ class SessionTrace:
         return {
             **({"failed_stage": self.failed_stage} if self.failed_stage else {}),
             **self.facts,
-            **{f"{name}_s": seconds for name, seconds in self._timings.items()},
+            **{f"{name}_s": seconds for name, seconds in self.timings.items()},
         }
 
 

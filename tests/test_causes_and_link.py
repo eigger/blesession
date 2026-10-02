@@ -131,3 +131,34 @@ def test_the_sentence_is_the_key_rendered():
     assert generic_cause(stages.AUTH, "no response", facts, noun="tag") == CAUSES[
         "auth.no_answer"
     ].format(noun="tag", where=placement(facts, noun="tag"))
+
+
+def test_a_timed_out_attempt_reports_its_own_sentence_and_key():
+    from blesession import SessionTrace, build_report
+
+    trace = SessionTrace()
+    exc = AttemptTimedOut(30, stage=stages.CONNECT)
+    report = build_report(
+        operation="op",
+        trace=trace,
+        exc=exc,
+        cause=lambda stage, detail, error, facts: "the device's reading",
+    )
+    assert report["timed_out"] is True
+    assert report["likely_cause_key"] == cause_key(stages.CONNECT, str(exc), exc=exc)
+    # The library's own sentence wins over the integration's.
+    assert report["likely_cause"] != "the device's reading"
+
+
+def test_failed_stage_and_detail_can_be_overridden():
+    from blesession import SessionTrace, build_report
+
+    report = build_report(
+        operation="op",
+        trace=SessionTrace(),
+        exc=RuntimeError("x"),
+        failed_stage="unlock",
+        failed_detail="part 3",
+    )
+    assert report["failed_stage"] == "unlock"
+    assert report["failed_detail"] == "part 3"

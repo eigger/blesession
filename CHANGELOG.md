@@ -11,6 +11,17 @@ primary stage names and the `likely_cause_key` names are part of the
 contract: troubleshooting docs quote them and integrations translate them,
 so any change to them is at least a minor bump and is listed here.
 
+## [Unreleased]
+
+### Fixed
+
+- Stage timings no longer round on every addition: a stage recorded many
+  times (a per-frame `@traced` write) lost sub-millisecond runs entirely or
+  inflated them. Seconds accumulate unrounded and are rounded to 3 places
+  only when read (`timings`, `as_dict()`, the report).
+- A notification taken off the queue just as the step's timeout fired is
+  kept for the next wait instead of being dropped.
+
 ## [0.3.0] — 2026-10-02
 
 Two diagnostics that misled when a connect failed or its route was unknown.

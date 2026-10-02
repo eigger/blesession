@@ -97,7 +97,9 @@ async def run_attempts[T](
 
     Never raises for a failed attempt: the returned Attempt carries the
     error, the trace and the stage, and the integration decides what to
-    raise or publish. `on_attempt` sees every attempt as it finishes — a
+    raise or publish. An exception from your own `guard`, `on_attempt` or
+    `retry_if` is not an attempt failure and propagates (`guard` runs holding
+    the lock, which is released on the way out). `on_attempt` sees every attempt as it finishes — a
     failed one, a successful one, and one a `guard` declined — outside the
     lock, so recording it cannot hold up other devices. Only the last
     attempt is returned, so `on_attempt` is the only way to record the

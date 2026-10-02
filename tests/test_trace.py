@@ -110,3 +110,12 @@ def test_failure_merges_trace_and_error():
         with trace.timed("transfer"):
             raise NotificationTimeout(5, step="part 3/40")
     assert trace.failure(NotificationTimeout(5, step="part 3/40")) == ("transfer", None)
+
+
+def test_many_short_stages_add_up_rather_than_rounding_away(monkeypatch):
+    """Rounding each addition lost 0.4 ms stages entirely and inflated 0.6 ms ones."""
+    trace = SessionTrace()
+    for _ in range(1000):
+        trace.record("transfer", 0.0004)
+    assert trace.timings == {"transfer": 0.4}
+    assert trace.as_dict()["transfer_s"] == 0.4
