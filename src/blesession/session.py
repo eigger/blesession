@@ -111,7 +111,8 @@ async def ble_session(
                    reads as "there was none" rather than as a measurement
                    that went missing. `settle_s`, `close_stale` and the
                    connect kwargs describe opening a link and are not applied
-                   to one already up.
+                   to one already up, nor is a `disconnected_callback` (the
+                   link keeps the one it was opened with).
     `settle_s`     pause after connecting before the first GATT operation, for
                    devices whose encryption settles after the L2CAP link is up;
                    a drop during the settle raises ConnectFailed(detail="settle")

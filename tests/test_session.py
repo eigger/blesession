@@ -392,3 +392,27 @@ async def test_an_already_dropped_handle_has_nothing_to_close(monkeypatch):
     async with ble_session(FakeDevice(), client=first, keep=True) as reused:
         assert reused is second
     assert first.disconnects == 0
+
+
+async def test_a_reply_arriving_while_waiting_beside_a_watch_is_returned(client):
+    async with ble_session(FakeDevice()) as c:
+        async with Notifications(c, "n") as replies:
+            asyncio.get_running_loop().call_later(0.01, c.reply, b"\x05")
+            assert await replies.next(1, step="start") == b"\x05"
+            asyncio.get_running_loop().call_later(0.01, c.reply, b"\x06")
+            assert await replies.wait_for(lambda d: d == b"\x06", 1, step="done") == b"\x06"
+            with pytest.raises(NotificationTimeout):
+                await replies.wait_for(lambda d: False, 0.01, step="done")
+
+
+async def test_a_frame_taken_as_the_timeout_fires_is_kept_for_the_next_wait(client):
+    async with ble_session(FakeDevice()) as c:
+        async with Notifications(c, "n") as replies:
+            task = asyncio.ensure_future(replies.next(60, step="start"))
+            await asyncio.sleep(0)  # the wait is parked on get/drop
+            c.reply(b"\x01")  # get completes...
+            c.reply(b"\x02")
+            task.cancel()  # ...but the wait is cancelled before it resumes
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert replies.clear() == [b"\x01", b"\x02"]
