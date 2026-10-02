@@ -13,7 +13,7 @@ so any change to them is at least a minor bump and is listed here.
 
 ## [0.3.0] — 2026-10-02
 
-Two diagnostics that misled when a connect failed.
+Two diagnostics that misled when a connect failed or its route was unknown.
 
 ### Fixed
 
@@ -27,8 +27,9 @@ Two diagnostics that misled when a connect failed.
 - `radio_facts()` reports `via_unconfirmed: True` when `via` could not be
   resolved from the link — no link, or a route habluetooth does not know. `via`
   then is the radio that heard the device best, not necessarily one the
-  connect went through; before, it read as the path that failed. A new report
-  key, hence the minor bump; nothing else about `via` changes.
+  connect went through; before, it read as the path the link took. A new report
+  key (also appended to `FACT_KEYS`), hence the minor bump; nothing else about
+  `via` changes.
 
 ## [0.2.0] — 2026-09-22
 
