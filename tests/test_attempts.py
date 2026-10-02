@@ -351,3 +351,21 @@ def test_only_a_sentence_this_library_wrote_carries_a_key():
 def test_a_success_carries_no_cause_at_all():
     report = build_report(operation="poll", trace=SessionTrace())
     assert "likely_cause" not in report and "likely_cause_key" not in report
+
+
+async def test_a_bound_that_fires_during_the_close_is_read_as_the_close_failing(monkeypatch):
+    """The work was done; the stack is not what stopped answering."""
+    client = FakeClient()
+    client.disconnect_delay_s = 2
+    monkeypatch.setattr(session_mod, "establish_connection", fake_connect(client))
+
+    async def attempt(a):
+        async with ble_session(FakeDevice(), trace=a.trace):
+            return "written"
+
+    result = await run_attempts(attempt, attempt_timeout_s=0.05, max_attempts=1)
+    assert isinstance(result.error, AttemptTimedOut)
+    report = report_attempt(result, operation="print")
+    assert report["failed_stage"] == stages.DISCONNECT
+    assert report["likely_cause_key"] == "disconnect.close_failed"
+    assert report["timed_out"] is True

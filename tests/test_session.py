@@ -416,3 +416,13 @@ async def test_a_frame_taken_as_the_timeout_fires_is_kept_for_the_next_wait(clie
             with pytest.raises(asyncio.CancelledError):
                 await task
             assert replies.clear() == [b"\x01", b"\x02"]
+
+
+async def test_a_failed_unsubscribe_is_logged_not_raised(client, caplog):
+    import logging
+
+    client.fail_stop_notify = OSError("proxy gone")
+    with caplog.at_level(logging.DEBUG, logger="blesession.notifications"):
+        async with Notifications(client, "n"):
+            pass
+    assert "proxy gone" in caplog.text

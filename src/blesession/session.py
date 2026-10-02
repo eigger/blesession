@@ -23,9 +23,11 @@ from .trace import SessionTrace
 _LOGGER = logging.getLogger(__name__)
 
 DISCONNECT_TIMEOUT_S = 10.0
-"""Default bound on the disconnect, which runs outside any attempt bound: a
-proxy that hung the session can hang the disconnect too, and the link is
-dropped anyway when the proxy comes back."""
+"""Default bound on the disconnect. It has its own bound because a proxy that
+hung the session can hang the disconnect too, and the link is dropped anyway
+when the proxy comes back. It runs in the session's `finally`, so inside
+whatever attempt bound `run_attempts` set: a bound that fires during it is
+read as the close failing (`disconnect.close_failed`), not a dead stack."""
 
 _SETTLE_POLL_STEP_S = 0.25
 

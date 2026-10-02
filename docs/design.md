@@ -101,7 +101,7 @@ async with ble_session(
     trace=None,              # SessionTrace; times "connect", "session" (the block), "disconnect"
     client=None,             # a link a previous keep=True session left up
     settle_s=0.0,            # pause after connect before the first GATT op
-    disconnect_timeout_s=10, # bound on the disconnect, outside the attempt bound
+    disconnect_timeout_s=10, # own bound on the disconnect (still inside the attempt bound)
     keep=False,              # True: leave the link up (e.g. keep_connection)
     close_stale=False,       # bleak_retry_connector.close_stale_connections_by_address first
     **connect_kwargs,        # use_services_cache, pair, ... -> establish_connection
@@ -226,8 +226,8 @@ present are retired in favour of this; a transfer-specific flag becomes
 |--------------|-----------------------------------------------|---------------------------------|
 | step         | one notification wait                         | protocol code, via `Notifications` |
 | attempt      | one try, connecting included                  | `run_attempts()`, value from the integration |
-| disconnect   | the close, *outside* the attempt bound        | `ble_session()`                 |
-| unsubscribe  | `stop_notify`, also outside the attempt bound | `Notifications` (`STOP_NOTIFY_TIMEOUT_S`) |
+| disconnect   | the close, with its own bound, but still *inside* the attempt bound |  `ble_session()`                 |
+| unsubscribe  | `stop_notify`, also inside the attempt bound, with its own | `Notifications` (`STOP_NOTIFY_TIMEOUT_S`) |
 
 The last two are the waits that run in `finally` / `__aexit__`, i.e. after
 the attempt bound has already fired. Anything unbounded there hangs the

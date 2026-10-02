@@ -60,6 +60,9 @@ def cause_key(stage: str | None, error: str, *, exc: BaseException | None = None
     unanswered = isinstance(exc, NotificationTimeout) or "no response" in err
     lost = isinstance(exc, SessionDropped) or "link dropped" in err
     if isinstance(exc, AttemptTimedOut):
+        # The bound fired while the close ran: the work was already done.
+        if stage == stages.DISCONNECT:
+            return "disconnect.close_failed"
         return "attempt_timed_out"
     if stage == stages.UNREACHABLE:
         return "unreachable"
