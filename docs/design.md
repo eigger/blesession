@@ -428,6 +428,8 @@ integration's own table takes over:
   repeats, the model/profile may not match
 - a `SessionDropped` in any protocol stage → the link went away mid-session
 - attempt deadline → the BLE stack stopped answering; restart adapter/proxy
+- attempt deadline *during* `disconnect` → the work was done but the result
+  was discarded; the close hung (`disconnect.timed_out`)
 - `disconnect` → the work was done; only the close failed
 
 The sentences read the **exception type** where there is one

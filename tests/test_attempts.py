@@ -353,7 +353,7 @@ def test_a_success_carries_no_cause_at_all():
     assert "likely_cause" not in report and "likely_cause_key" not in report
 
 
-async def test_a_bound_that_fires_during_the_close_is_read_as_the_close_failing(monkeypatch):
+async def test_a_bound_that_fires_during_the_close_is_read_as_the_close_timing_out(monkeypatch):
     """The work was done; the stack is not what stopped answering."""
     client = FakeClient()
     client.disconnect_delay_s = 2
