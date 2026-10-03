@@ -13,6 +13,8 @@ so any change to them is at least a minor bump and is listed here.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-03
+
 ### Added
 
 - `Notifications.request()`: clear stale replies, write, and return the reply
