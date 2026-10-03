@@ -56,6 +56,7 @@ blesession/
   subscribe.py      start_notify_with_recovery(), NOTIFY_ATTEMPTS,
                     STOP_NOTIFY_TIMEOUT_S
   transfer.py       write_chunks()
+  gatt.py           characteristic_or_raise()
   trace.py          SessionTrace, traced()
   stages.py         the fixed stage vocabulary, primary_of()
   errors.py         BleSessionError and subclasses
@@ -367,7 +368,7 @@ report = build_report(
     trace=trace,
     exc=exc,                    # None on success
     facts=radio_facts(...),
-    cause=my_likely_cause,      # (stage, detail, error, facts) -> str | None
+    cause=my_likely_cause,      # (stage, detail, error, facts, exc) -> str | None
     noun="device",              # what the generic sentences call the device
 )
 report = report_attempt(attempt, operation="write", facts=..., cause=..., attempts=3)
@@ -454,6 +455,9 @@ integration's own table takes over:
 - `unreachable` → no radio sees it: range, asleep, battery, adapter down
 - `session` → dropped or refused before the protocol started; if it
   repeats, the model/profile may not match
+- a `GattMismatch` in any stage → the device lacks the service,
+  characteristic, property or write size the protocol needs
+  (`session.gatt_mismatch`)
 - a `SessionDropped` in any protocol stage → the link went away mid-session
 - attempt deadline → the BLE stack stopped answering; restart adapter/proxy
 - attempt deadline *during* `disconnect` → the work was done but the result
@@ -484,6 +488,8 @@ Only a bug should.
 BleSessionError(stage, detail=None)
   Unreachable             no handle for the address
   ConnectFailed           establish_connection raised, or the link dropped in settle
+  GattMismatch            the device lacks the service / characteristic /
+                          property / write size the protocol needs
   SessionDropped          the link went away mid-session (carries the step
                           that was waiting), raised by a Notifications wait
   NotificationTimeout     a step wait ran out (carries step)

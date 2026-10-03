@@ -55,6 +55,17 @@ class SessionDropped(BleSessionError):
     stage = stages.SESSION
 
 
+class GattMismatch(BleSessionError):
+    """The link is up but the device does not expose what the protocol needs.
+
+    A service or characteristic is missing, lacks a property, or the write
+    size is too small for the protocol's frames: another model or firmware,
+    not a flaky link.
+    """
+
+    stage = stages.SESSION
+
+
 class NotificationTimeout(BleSessionError, TimeoutError):
     """No notification arrived in time. Carries the `step` that was waiting.
 

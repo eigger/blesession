@@ -21,7 +21,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from . import stages
-from .errors import AttemptTimedOut, NotificationTimeout, SessionDropped
+from .errors import AttemptTimedOut, GattMismatch, NotificationTimeout, SessionDropped
 
 WEAK_RSSI_DBM = -85
 """At or below this the placement advice is worth giving; above it the radio
@@ -65,6 +65,11 @@ def cause_key(stage: str | None, error: str, *, exc: BaseException | None = None
         if stage == stages.DISCONNECT:
             return "disconnect.timed_out"
         return "attempt_timed_out"
+    if isinstance(exc, GattMismatch):
+        # By type, whatever the stage: a protocol often looks its
+        # characteristics up inside its first device stage, and the trace's
+        # stage wins over the error's own.
+        return "session.gatt_mismatch"
     if stage == stages.UNREACHABLE:
         return "unreachable"
     if stage == stages.CONNECT:
@@ -117,6 +122,11 @@ CAUSES: dict[str, str] = {
         "Connected, but the {noun} dropped or refused the session before the "
         "protocol started (service discovery / notifications); usually transient "
         "— if it repeats, the protocol or model may not match."
+    ),
+    "session.gatt_mismatch": (
+        "Connected, but the {noun} does not expose the GATT service or "
+        "characteristic the protocol needs (or its write size is too small): "
+        "another model or firmware, or a link that has not negotiated its MTU."
     ),
     "auth.no_answer": (
         "The {noun} did not answer the handshake: not ready, or the link dropped.{where}"
