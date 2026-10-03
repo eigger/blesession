@@ -1,14 +1,15 @@
 name: Release
 
-# Publishes to PyPI when a v* tag is pushed (e.g. `git tag v0.1.0 && git push --tags`).
+# Publishes to PyPI when a GitHub Release is published. Use the version name
+# for both the release title and tag (for example, `v0.5.0`).
 #
 # Uses PyPI Trusted Publishing (OIDC) — no API token needed. Configure it once at
 # https://pypi.org/manage/project/blesession/settings/publishing/ with:
 #   owner = eigger, repo = blesession, workflow = release.yml, environment = pypi
 
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
 
 jobs:
   build:

@@ -11,6 +11,14 @@ primary stage names and the `likely_cause_key` names are part of the
 contract: troubleshooting docs quote them and integrations translate them,
 so any change to them is at least a minor bump and is listed here.
 
+## [Unreleased]
+
+### Changed
+
+- PyPI publishing now starts when a GitHub Release is published, using a
+  version name for the release title and tag; pushing a tag alone no longer
+  starts deployment.
+
 ## [0.4.1] — 2026-10-03
 
 ### Fixed
