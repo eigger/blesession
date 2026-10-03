@@ -13,10 +13,12 @@ from blesession import (
     run_attempts,
     stages,
     start_notify_with_recovery,
+    write_chunks,
 )
 from blesession import notifications as notifications_mod
 from blesession import session as session_mod
 from blesession import subscribe as subscribe_mod
+from blesession import transfer as transfer_mod
 from blesession.testing import FakeClient, FakeDevice, fake_connect
 
 
@@ -708,3 +710,88 @@ async def test_plain_notifications_do_not_retry(client):
     with pytest.raises(BleakError):
         async with Notifications(client, "n"):
             pass
+
+
+async def test_write_chunks_slices_and_counts(client):
+    sent = await write_chunks(client, "w", bytes(range(10)), 4, step="transfer")
+    assert sent == 3
+    assert client.writes == [
+        ("w", bytes([0, 1, 2, 3]), False),
+        ("w", bytes([4, 5, 6, 7]), False),
+        ("w", bytes([8, 9]), False),
+    ]
+
+
+async def test_write_chunks_passes_response_wraps_and_reports_progress(client):
+    progress = []
+    await write_chunks(
+        client,
+        "w",
+        b"abcdef",
+        4,
+        step="transfer",
+        response=True,
+        wrap=lambda offset, chunk: bytes([offset]) + chunk,
+        on_chunk=progress.append,
+    )
+    assert client.writes == [("w", b"\x00abcd", True), ("w", b"\x04ef", True)]
+    assert progress == [1, 2]
+
+
+async def test_write_chunks_gaps_after_every_chunk(client, monkeypatch):
+    sleeps = []
+
+    async def sleep(s):
+        sleeps.append(s)
+
+    monkeypatch.setattr(transfer_mod.asyncio, "sleep", sleep)
+    await write_chunks(client, "w", b"abcdef", 2, step="transfer", gap_s=0.01)
+    assert sleeps == [0.01, 0.01, 0.01]
+
+
+async def test_write_chunks_with_nothing_to_write_writes_nothing(client):
+    assert await write_chunks(client, "w", b"", 4, step="transfer") == 0
+    assert client.writes == []
+
+
+async def test_write_chunks_needs_a_positive_size(client):
+    with pytest.raises(ValueError):
+        await write_chunks(client, "w", b"abc", 0, step="transfer")
+
+
+async def test_write_chunks_stops_with_a_session_drop_once_the_link_is_gone(client):
+    async with ble_session(FakeDevice()) as c:
+        progress = []
+
+        def on_chunk(sent):
+            progress.append(sent)
+            if sent == 2:
+                c.drop()
+
+        with pytest.raises(SessionDropped) as info:
+            await write_chunks(c, "w", b"abcdefgh", 2, step="transfer", on_chunk=on_chunk)
+    assert info.value.detail == "transfer"
+    assert progress == [1, 2] and len(c.writes) == 2
+
+
+async def test_write_chunks_keeps_progress_when_a_write_fails(client):
+    progress = []
+    real = client.write_gatt_char
+
+    async def flaky(char, data, response=False):
+        if len(client.writes) == 2:
+            raise OSError("write failed")
+        await real(char, data, response)
+
+    client.write_gatt_char = flaky
+    with pytest.raises(OSError):
+        await write_chunks(client, "w", b"abcdefgh", 2, step="t", on_chunk=progress.append)
+    assert progress == [1, 2]
+
+
+async def test_write_chunks_writes_nothing_on_a_link_that_is_already_down(client):
+    async with ble_session(FakeDevice()) as c:
+        c.drop()
+        with pytest.raises(SessionDropped):
+            await write_chunks(c, "w", b"abcd", 2, step="transfer")
+    assert c.writes == []

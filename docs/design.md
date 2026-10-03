@@ -53,7 +53,9 @@ blesession/
   session.py        ble_session(), current_client_class(), dropped_event()
                     still_up()
   notifications.py  Notifications
-  subscribe.py      start_notify_with_recovery(), STOP_NOTIFY_TIMEOUT_S
+  subscribe.py      start_notify_with_recovery(), NOTIFY_ATTEMPTS,
+                    STOP_NOTIFY_TIMEOUT_S
+  transfer.py       write_chunks()
   trace.py          SessionTrace, traced()
   stages.py         the fixed stage vocabulary, primary_of()
   errors.py         BleSessionError and subclasses
@@ -200,6 +202,11 @@ async with Notifications(client, NOTIFY_UUID, settle=0.5) as replies:
 - `__aexit__` unsubscribes and ignores a failure on a dropped link, under
   its own `STOP_NOTIFY_TIMEOUT_S` bound — it runs in the attempt's scope, and after an attempt
   bound has fired it has nothing but this one (§5).
+- `write_chunks(client, uuid, data, size, step=)` is the chunk loop for a
+  payload larger than one write. The device keeps the chunk size, the gap,
+  acknowledged or not, and the framing (`wrap`); the library keeps the
+  slicing and the early `SessionDropped` once the link is gone. It is not a
+  `Notifications` method: it needs no subscription.
 - Multi-channel protocols open one `Notifications` per characteristic. A
   handle-indexed dispatcher is out of scope.
 
