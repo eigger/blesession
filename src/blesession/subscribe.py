@@ -26,23 +26,33 @@ _LOGGER = logging.getLogger(__name__)
 NOTIFY_ATTEMPTS = 3
 """Subscribe attempts before the last error is raised."""
 
+STOP_NOTIFY_TIMEOUT_S = 5.0
+"""Bound on the unsubscribe. It runs in `Notifications.__aexit__` and in the
+recovery below; once an attempt bound has fired (it cancels only once)
+nothing else bounds it, so a proxy that stopped answering would otherwise
+hang here holding the lock."""
+
 _STALE_SUBSCRIPTION = (
     "notify acquired",
-    "notpermitted",
     "already enabled",
     # BlueZ's wording when it still holds the previous connection's session.
     "register notify session",
 )
-_NO_DISCOVERY = ("service discovery has not been performed", "not been performed")
+_NO_DISCOVERY = ("not been performed",)
 
 
 async def _refresh_services(client: BleakClient) -> None:
-    """Re-run GATT discovery on backends that still expose it."""
+    """Re-run GATT discovery on backends that still expose `get_services`.
+
+    bleak 3 removed it, so there this is a no-op and the backoff before the
+    next attempt is what gives discovery time to finish.
+    """
     get_services = getattr(client, "get_services", None)
     if not callable(get_services):
         return
     try:
-        await get_services()
+        async with asyncio.timeout(STOP_NOTIFY_TIMEOUT_S):
+            await get_services()
     except Exception as exc:  # noqa: BLE001 - best effort, the retry decides
         _LOGGER.debug("get_services refresh failed (ignored): %s", exc)
 
@@ -61,6 +71,8 @@ async def start_notify_with_recovery(
     refreshes. Any other error is raised at once: whether to retry it is the
     integration's policy. The last attempt's error is raised as it was.
     """
+    if attempts < 1:
+        raise ValueError(f"attempts must be at least 1, not {attempts}")
     for attempt in range(1, attempts + 1):
         try:
             await client.start_notify(characteristic, callback)
@@ -81,7 +93,8 @@ async def start_notify_with_recovery(
             )
             if stale:
                 try:
-                    await client.stop_notify(characteristic)
+                    async with asyncio.timeout(STOP_NOTIFY_TIMEOUT_S):
+                        await client.stop_notify(characteristic)
                 except Exception:  # noqa: BLE001 - nothing to release is fine
                     pass
             await _refresh_services(client)

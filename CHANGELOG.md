@@ -19,9 +19,9 @@ so any change to them is at least a minor bump and is listed here.
   (or the first one `accept` takes), with an optional pause between the
   write and the wait. It replaces the clear/write/`next` triple that
   integrations repeat for every command.
-- `Notifications.next_burst()`: the next notification plus everything queued
-  behind it, joined, for devices that spread one reply over several
-  notifications.
+- `Notifications.next_burst()`: the next notification plus the ones that
+  trail in behind it (until `gap_s` of quiet), joined, for devices that
+  spread one reply over several notifications.
 - `start_notify_with_recovery()` and `Notifications(recover=True)`: a
   subscription that fails because the previous connection's subscription is
   still held (BlueZ "notify acquired", ESPHome proxy "already enabled") is

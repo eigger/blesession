@@ -53,6 +53,7 @@ blesession/
   session.py        ble_session(), current_client_class(), dropped_event()
                     still_up()
   notifications.py  Notifications
+  subscribe.py      start_notify_with_recovery(), STOP_NOTIFY_TIMEOUT_S
   trace.py          SessionTrace, traced()
   stages.py         the fixed stage vocabulary, primary_of()
   errors.py         BleSessionError and subclasses
@@ -174,6 +175,21 @@ async with Notifications(client, NOTIFY_UUID, settle=0.5) as replies:
   The event comes from `dropped_event(client)`; `dropped=` overrides it for
   a connection the caller owns, and an unwatched client keeps the plain
   timeout behaviour.
+- `request(uuid, data, timeout=, step=)` is the clear / write / `next` triple
+  every command repeats: stale replies are dropped, the write is bounded by
+  `timeout` (a hung write reads as the step timing out), then the reply is
+  awaited. `accept=` picks the reply out of several, `pace_s=` is the pause
+  some tags need between write and wait, and a link already down is
+  `SessionDropped`.
+- `next_burst(timeout, step=, gap_s=0.05)` is `next()` plus the notifications
+  that trail in behind it, for a reply spread over several of them; the
+  caller reassembles frames from the joined bytes.
+- `recover=True` subscribes with `start_notify_with_recovery()`: a
+  reconnect can still hold the last link's subscription (BlueZ "notify
+  acquired", the ESPHome proxy's "already enabled"), which is released and
+  retried a few times. Unrecognised errors are raised at once; retrying
+  those is the integration's policy. It matches backend wording, so like
+  `link.py` it is the place to look when a backend release changes it.
 - `clear()` drops what arrived so far (protocols that must ignore a late
   reply from a previous command).
 - `wait_for(accept)` lets `accept` raise to turn an error frame into the
