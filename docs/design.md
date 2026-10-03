@@ -455,6 +455,9 @@ integration's own table takes over:
 - `unreachable` → no radio sees it: range, asleep, battery, adapter down
 - `session` → dropped or refused before the protocol started; if it
   repeats, the model/profile may not match
+- a `GattMismatch` in any stage → the device lacks the service,
+  characteristic, property or write size the protocol needs
+  (`session.gatt_mismatch`)
 - a `SessionDropped` in any protocol stage → the link went away mid-session
 - attempt deadline → the BLE stack stopped answering; restart adapter/proxy
 - attempt deadline *during* `disconnect` → the work was done but the result

@@ -65,6 +65,11 @@ def cause_key(stage: str | None, error: str, *, exc: BaseException | None = None
         if stage == stages.DISCONNECT:
             return "disconnect.timed_out"
         return "attempt_timed_out"
+    if isinstance(exc, GattMismatch):
+        # By type, whatever the stage: a protocol often looks its
+        # characteristics up inside its first device stage, and the trace's
+        # stage wins over the error's own.
+        return "session.gatt_mismatch"
     if stage == stages.UNREACHABLE:
         return "unreachable"
     if stage == stages.CONNECT:
@@ -78,8 +83,6 @@ def cause_key(stage: str | None, error: str, *, exc: BaseException | None = None
         # the work was already done, and the stage below says so.
         return "link_lost"
     if stage == stages.SESSION:
-        if isinstance(exc, GattMismatch):
-            return "session.gatt_mismatch"
         return "session.refused"
     if stage == stages.AUTH:
         return "auth.no_answer" if unanswered else None

@@ -45,8 +45,8 @@ def characteristic_or_raise(
     stays at the 20-byte default until the MTU is known (always, on BlueZ
     before 5.62). Check it once the link has settled, and treat a too-small
     size as "this link cannot carry the frames" as much as "wrong model".
-    The error is deterministic, so `default_retry_if` retries it like any
-    other; pass your own `retry_if` to stop at the first one.
+    The error is deterministic, but `default_retry_if` still retries it;
+    pass your own `retry_if` to stop at the first one.
     """
     if isinstance(properties, str):
         properties = (properties,)

@@ -78,3 +78,15 @@ def test_a_mismatch_reports_its_own_cause_key():
     report = build_report(operation="write", trace=SessionTrace(), exc=info.value, noun="tag")
     assert report["failed_stage"] == stages.SESSION
     assert report["likely_cause_key"] == "session.gatt_mismatch"
+
+
+def test_the_cause_key_holds_inside_a_device_stage():
+    from blesession import SessionTrace, build_report
+
+    client, _ = _client(char=False)
+    trace = SessionTrace(stage_map={"unlock": stages.AUTH})
+    with pytest.raises(GattMismatch) as info, trace.timed("unlock"):
+        characteristic_or_raise(client, SERVICE, CHAR)
+    report = build_report(operation="write", trace=trace, exc=info.value, noun="tag")
+    assert report["failed_stage"] == stages.AUTH
+    assert report["likely_cause_key"] == "session.gatt_mismatch"
