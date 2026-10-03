@@ -165,7 +165,7 @@ def test_failed_stage_and_detail_can_be_overridden():
 
 
 def test_cause_callback_receives_the_error_to_test_its_type():
-    from blesession import NotificationTimeout, SessionTrace
+    from blesession import NotificationTimeout, SessionTrace, build_report
 
     seen = []
 
