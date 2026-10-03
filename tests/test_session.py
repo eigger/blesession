@@ -787,3 +787,11 @@ async def test_write_chunks_keeps_progress_when_a_write_fails(client):
     with pytest.raises(OSError):
         await write_chunks(client, "w", b"abcdefgh", 2, step="t", on_chunk=progress.append)
     assert progress == [1, 2]
+
+
+async def test_write_chunks_writes_nothing_on_a_link_that_is_already_down(client):
+    async with ble_session(FakeDevice()) as c:
+        c.drop()
+        with pytest.raises(SessionDropped):
+            await write_chunks(c, "w", b"abcd", 2, step="transfer")
+    assert c.writes == []
