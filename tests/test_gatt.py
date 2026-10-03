@@ -49,3 +49,32 @@ def test_mismatch_names_what_is_wrong(kwargs, call, text):
 def test_no_requirements_means_only_existence_is_checked():
     client, characteristic = _client(properties=(), size=1)
     assert characteristic_or_raise(client, SERVICE, CHAR) is characteristic
+
+
+def test_a_bare_string_is_one_property_not_its_characters():
+    client, _ = _client(properties=("notify",))
+    assert characteristic_or_raise(client, SERVICE, CHAR, properties="notify")
+    with pytest.raises(GattMismatch, match="lacks write-without-response"):
+        characteristic_or_raise(client, SERVICE, CHAR, properties="write-without-response")
+
+
+def test_bleak_lookup_errors_are_a_mismatch():
+    from bleak.exc import BleakError
+
+    def boom(uuid):
+        raise BleakError("Multiple Services with this UUID")
+
+    client = SimpleNamespace(services=SimpleNamespace(get_service=boom))
+    with pytest.raises(GattMismatch, match="GATT lookup failed: Multiple Services"):
+        characteristic_or_raise(client, SERVICE, CHAR, label="XTE")
+
+
+def test_a_mismatch_reports_its_own_cause_key():
+    from blesession import SessionTrace, build_report
+
+    client, _ = _client(char=False)
+    with pytest.raises(GattMismatch) as info:
+        characteristic_or_raise(client, SERVICE, CHAR)
+    report = build_report(operation="write", trace=SessionTrace(), exc=info.value, noun="tag")
+    assert report["failed_stage"] == stages.SESSION
+    assert report["likely_cause_key"] == "session.gatt_mismatch"

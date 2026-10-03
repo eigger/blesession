@@ -2,6 +2,7 @@ from blesession import (
     CAUSES,
     AttemptTimedOut,
     ConnectFailed,
+    GattMismatch,
     LinkInfo,
     NotificationTimeout,
     SessionDropped,
@@ -111,6 +112,7 @@ def test_every_key_has_a_sentence_and_every_sentence_a_key():
             ("", NotificationTimeout(5, step="x")),
             ("", SessionDropped("gone")),
             ("", ConnectFailed("x", detail="settle")),
+            ("", GattMismatch("no service")),
         )
     }
     assert reachable - {None} == set(CAUSES)

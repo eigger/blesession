@@ -20,9 +20,11 @@ so any change to them is at least a minor bump and is listed here.
 - `characteristic_or_raise(client, service_uuid, char_uuid, properties=,
   min_write_size=, label=)`: the service / characteristic lookup every
   protocol opens with, including the required properties and the minimum
-  write-without-response size. It raises the new `GattMismatch`.
+  write-without-response size. It raises the new `GattMismatch`. A too-small
+  write size can also be a link that has not negotiated its MTU yet.
 - `GattMismatch`: a `BleSessionError` in the `session` stage for a device
-  that does not expose what the protocol needs.
+  that does not expose what the protocol needs. Its generic sentence has its
+  own key, `session.gatt_mismatch` (a new `likely_cause_key`).
 
 ### Changed
 
