@@ -31,6 +31,7 @@ from .report import FACT_KEYS, SessionReports, build_report, report_attempt
 from .session import DISCONNECT_TIMEOUT_S, ble_session, dropped_event, still_up
 from .subscribe import NOTIFY_ATTEMPTS, STOP_NOTIFY_TIMEOUT_S, start_notify_with_recovery
 from .trace import SessionTrace, traced
+from .transfer import write_chunks
 
 __version__ = "0.4.1"
 """The one place the version is written; pyproject.toml reads it."""
@@ -69,4 +70,5 @@ __all__ = [
     "start_notify_with_recovery",
     "still_up",
     "traced",
+    "write_chunks",
 ]

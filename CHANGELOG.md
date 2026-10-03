@@ -15,6 +15,14 @@ so any change to them is at least a minor bump and is listed here.
 
 ### Added
 
+- `write_chunks()`: write a payload as consecutive chunks of at most `size`
+  bytes, with an optional `gap_s` between writes, a `wrap(offset, chunk)` for
+  protocols that frame each chunk and an `on_chunk(sent)` progress hook.
+  Returns the number of writes. A link that is down ends it with
+  `SessionDropped` naming the step before the next write.
+
+### Added
+
 - `Notifications.request()`: clear stale replies, write, and return the reply
   (or the first one `accept` takes), with an optional pause between the
   write and the wait. It replaces the clear/write/`next` triple that
