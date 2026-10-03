@@ -17,13 +17,9 @@ from bleak import BleakClient
 
 from .errors import NotificationTimeout, SessionDropped
 from .session import dropped_event
+from .subscribe import STOP_NOTIFY_TIMEOUT_S, start_notify_with_recovery
 
 _LOGGER = logging.getLogger(__name__)
-
-STOP_NOTIFY_TIMEOUT_S = 5.0
-"""Bound on the unsubscribe. It runs in `__aexit__`; once an attempt bound
-has fired (it cancels only once) nothing else bounds it, so a proxy that
-stopped answering would otherwise hang here holding the lock."""
 
 
 class Notifications:
@@ -43,6 +39,9 @@ class Notifications:
     `ble_session()` registered for this client (see `dropped_event`). Pass
     one explicitly when you own the connection yourself; pass
     `dropped=asyncio.Event()` (never set) to wait the timeout out regardless.
+
+    `recover=True` subscribes with `start_notify_with_recovery`, for a link
+    that may still carry the previous connection's subscription.
     """
 
     def __init__(
@@ -52,7 +51,9 @@ class Notifications:
         *,
         settle: float = 0.0,
         dropped: asyncio.Event | None = None,
+        recover: bool = False,
     ) -> None:
+        self._recover = recover
         self._client = client
         self._characteristic = characteristic
         self._settle = settle
@@ -60,7 +61,10 @@ class Notifications:
         self._queue: asyncio.Queue[bytes] = asyncio.Queue()
 
     async def __aenter__(self) -> Notifications:
-        await self._client.start_notify(self._characteristic, self._on_notify)
+        if self._recover:
+            await start_notify_with_recovery(self._client, self._characteristic, self._on_notify)
+        else:
+            await self._client.start_notify(self._characteristic, self._on_notify)
         try:
             if self._settle:
                 # Some adapters/proxies drop a write issued right after the CCCD write.
@@ -112,6 +116,70 @@ class Notifications:
                 return await self._next(step)
         except TimeoutError as exc:
             raise NotificationTimeout(timeout, step=step) from exc
+
+    async def next_burst(self, timeout: float, *, step: str, gap_s: float = 0.05) -> bytes:
+        """The next notification plus the ones that follow it, joined.
+
+        For a device that spreads one reply over several notifications, or
+        sends unsolicited frames in a burst alongside the real one: the
+        caller reassembles frames from the bytes. After the first frame it
+        keeps collecting until `gap_s` passes with nothing new (and never
+        past `timeout` overall); `gap_s=0` takes only what is already queued.
+        A drop after the first frame ends the burst, not the call: what
+        arrived is returned and the next wait reports the drop.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        parts = [await self.next(timeout, step=step)]
+        while True:
+            parts.extend(self.clear())
+            wait = min(gap_s, deadline - loop.time())
+            if wait <= 0:
+                break
+            try:
+                async with asyncio.timeout(wait):
+                    parts.append(await self._next(step))
+            except (TimeoutError, SessionDropped):
+                break
+        return b"".join(parts)
+
+    async def request(
+        self,
+        characteristic: Any,
+        data: bytes,
+        *,
+        timeout: float,
+        step: str,
+        response: bool = False,
+        accept: Callable[[bytes], bool] | None = None,
+        pace_s: float = 0.0,
+    ) -> bytes:
+        """Write `data`, return the device's reply.
+
+        Notifications received before the write are dropped first: they
+        answer something earlier, not this request. A late reply to an
+        earlier request that lands after that is indistinguishable from this
+        one's, so give `accept` a way to tell them apart when that can
+        happen. `accept` picks the reply out of several (as `wait_for`).
+
+        `timeout` bounds the write and, separately, the wait for the reply;
+        `pace_s`, the pause between the two that some tags need, is on top of
+        both. A link that is already down raises `SessionDropped` rather
+        than whatever the backend would say about the write.
+        """
+        if self._dropped is not None and self._dropped.is_set():
+            raise SessionDropped(f"The link dropped before {step}", detail=step)
+        self.clear()
+        try:
+            async with asyncio.timeout(timeout):
+                await self._client.write_gatt_char(characteristic, data, response=response)
+        except TimeoutError as exc:
+            raise NotificationTimeout(timeout, step=step) from exc
+        if pace_s > 0:
+            await asyncio.sleep(pace_s)
+        if accept is None:
+            return await self.next(timeout, step=step)
+        return await self.wait_for(accept, timeout, step=step)
 
     async def wait_for(
         self, accept: Callable[[bytes], bool], timeout: float, *, step: str
