@@ -13,6 +13,14 @@ so any change to them is at least a minor bump and is listed here.
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-10-04
+
+### Added
+
+- `Notifications.request(write_timeout=)`: a separate bound for the write,
+  for a short reply window that must not cut a slow write off. It defaults
+  to `timeout`, so existing calls behave as before.
+
 ## [0.5.0] — 2026-10-03
 
 ### Added

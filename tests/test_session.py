@@ -575,6 +575,22 @@ async def test_request_reports_a_write_that_never_returns_as_its_step(client):
     assert info.value.step == "start"
 
 
+async def test_request_write_timeout_bounds_the_write_separately(client):
+    async def slow(*_a, **_k):
+        await asyncio.sleep(0.05)
+        replies._on_notify(None, bytearray(b"ok"))
+
+    async with Notifications(client, "n") as replies:
+        client.write_gatt_char = slow
+        # A reply window shorter than the write does not cut the write off...
+        reply = await replies.request("w", b"\xaa", timeout=0.01, step="start", write_timeout=1)
+        assert reply == b"ok"
+        # ...and the write limit names itself when it is the one that expires.
+        with pytest.raises(NotificationTimeout) as info:
+            await replies.request("w", b"\xaa", timeout=1, step="start", write_timeout=0.01)
+    assert info.value.timeout == 0.01
+
+
 class _StaleOnce:
     """start_notify fails with `message` `fails` times, then works."""
 
