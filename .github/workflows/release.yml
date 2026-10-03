@@ -1,6 +1,7 @@
 name: Release
 
-# Publishes to PyPI when a GitHub Release is published for a version tag.
+# Publishes to PyPI when a GitHub Release is published. Use the version name
+# for both the release title and tag (for example, `v0.5.0`).
 #
 # Uses PyPI Trusted Publishing (OIDC) — no API token needed. Configure it once at
 # https://pypi.org/manage/project/blesession/settings/publishing/ with:

@@ -106,8 +106,10 @@ a build that asserts `py.typed` and the licence are in the wheel.
 
 **Releasing**: add a version section to [`CHANGELOG.md`](CHANGELOG.md)
 (behaviour changes go under *Changed* with before/after), bump `version` in
-`pyproject.toml`, merge, then tag: pushing a `v*` tag triggers
-`.github/workflows/release.yml` to build and publish to PyPI (trusted publishing).
+`src/blesession/__init__.py`, and merge. Then create a GitHub Release whose
+title and tag use the version name (for example, `v0.5.0`). Publishing the
+release triggers `.github/workflows/release.yml` to build and publish to PyPI
+with trusted publishing.
 
 ## License
 
