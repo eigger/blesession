@@ -130,8 +130,10 @@ Rules, all of which at least one integration currently gets differently:
 - The disconnect runs in `finally`, with its own timeout, and a disconnect
   failure never masks the original exception. It is logged at debug, not
   warning.
-- `keep=True` skips the disconnect; the caller owns the link. `client=`
-  hands it back for the next session:
+- Once the client has been handed to the caller, `keep=True` skips the
+  disconnect and the caller owns the link. A failure during connect or
+  post-connect settle happens before handoff, so that connection is closed
+  even with `keep=True`. `client=` hands a kept link back for the next session:
 
   ```python
   async with ble_session(device, client=self._client, keep=self._keep) as client:
@@ -175,7 +177,10 @@ async with Notifications(client, NOTIFY_UUID, settle=0.5) as replies:
 - `clear()` drops what arrived so far (protocols that must ignore a late
   reply from a previous command).
 - `wait_for(accept)` lets `accept` raise to turn an error frame into the
-  session's failure.
+  session's failure, preserving the callback's exception even when it is a
+  `TimeoutError`.
+- If the settle wait in `__aenter__` fails or is cancelled after subscribing,
+  the notification subscription is cleaned up before the error propagates.
 - `__aexit__` unsubscribes and ignores a failure on a dropped link, under
   its own `STOP_NOTIFY_TIMEOUT_S` bound — it runs in the attempt's scope, and after an attempt
   bound has fired it has nothing but this one (§5).
