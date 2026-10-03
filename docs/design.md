@@ -179,8 +179,8 @@ async with Notifications(client, NOTIFY_UUID, settle=0.5) as replies:
   timeout behaviour.
 - `request(uuid, data, timeout=, step=)` is the clear / write / `next` triple
   every command repeats: stale replies are dropped, the write is bounded by
-  `timeout` (a hung write reads as the step timing out), then the reply is
-  awaited. `accept=` picks the reply out of several, `pace_s=` is the pause
+  `timeout` (a hung write reads as the step timing out; `write_timeout=`
+  gives it its own limit), then the reply is awaited. `accept=` picks the reply out of several, `pace_s=` is the pause
   some tags need between write and wait, and a link already down is
   `SessionDropped`.
 - `next_burst(timeout, step=, gap_s=0.05)` is `next()` plus the notifications

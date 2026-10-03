@@ -150,6 +150,7 @@ class Notifications:
         *,
         timeout: float,
         step: str,
+        write_timeout: float | None = None,
         response: bool = False,
         accept: Callable[[bytes], bool] | None = None,
         pace_s: float = 0.0,
@@ -163,18 +164,21 @@ class Notifications:
         happen. `accept` picks the reply out of several (as `wait_for`).
 
         `timeout` bounds the write and, separately, the wait for the reply;
-        `pace_s`, the pause between the two that some tags need, is on top of
-        both. A link that is already down raises `SessionDropped` rather
-        than whatever the backend would say about the write.
+        `write_timeout` bounds the write alone when it needs a different limit
+        (a short reply window must not cut a slow write off). `pace_s`, the
+        pause between the two that some tags need, is on top of both. A link
+        that is already down raises `SessionDropped` rather than whatever the
+        backend would say about the write.
         """
         if self._dropped is not None and self._dropped.is_set():
             raise SessionDropped(f"The link dropped before {step}", detail=step)
         self.clear()
+        write_limit = timeout if write_timeout is None else write_timeout
         try:
-            async with asyncio.timeout(timeout):
+            async with asyncio.timeout(write_limit):
                 await self._client.write_gatt_char(characteristic, data, response=response)
         except TimeoutError as exc:
-            raise NotificationTimeout(timeout, step=step) from exc
+            raise NotificationTimeout(write_limit, step=step) from exc
         if pace_s > 0:
             await asyncio.sleep(pace_s)
         if accept is None:
