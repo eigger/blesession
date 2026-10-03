@@ -33,7 +33,7 @@ from .subscribe import NOTIFY_ATTEMPTS, STOP_NOTIFY_TIMEOUT_S, start_notify_with
 from .trace import SessionTrace, traced
 from .transfer import write_chunks
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 """The one place the version is written; pyproject.toml reads it."""
 
 __all__ = [
