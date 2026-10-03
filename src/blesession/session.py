@@ -148,6 +148,7 @@ async def ble_session(
     trace = trace if trace is not None else SessionTrace()
     address = ble_device.address
     reused = client if still_up(client) else None
+    handed_off = False
     # A handle `still_up` turned down but that is somehow still open is this
     # function's to close, not the caller's: they are about to overwrite
     # their reference with the client we hand back, and an abandoned link
@@ -199,9 +200,13 @@ async def ble_session(
                     await _settle(client, settle_s, dropped)
         assert client is not None  # both branches above set it or raised
         with trace.timed(stages.SESSION):
+            handed_off = True
             yield client
     finally:
-        if client is not None and not keep and client.is_connected:
+        # `keep` transfers ownership only after the context yields the client.
+        # A connect/settle failure before that point must not strand a link the
+        # caller never received.
+        if client is not None and (not keep or not handed_off) and client.is_connected:
             with trace.timed(stages.DISCONNECT):
                 await _close(client, disconnect_timeout_s, address, trace, "disconnect")
 

@@ -9,6 +9,7 @@ from blesession import (
     SessionDropped,
     SessionTrace,
     ble_session,
+    run_attempts,
     stages,
 )
 from blesession import notifications as notifications_mod
@@ -116,6 +117,17 @@ async def test_settle_drop_is_connect_failed_with_settle_detail(client):
             pass
     assert info.value.detail == "settle"
     assert client.disconnects == 0  # nothing to disconnect
+
+
+async def test_keep_does_not_strand_a_link_when_settle_times_out(client):
+    async def attempt(_attempt):
+        async with ble_session(FakeDevice(), keep=True, settle_s=1):
+            pass
+
+    result = await run_attempts(attempt, attempt_timeout_s=0.01)
+    assert result.timed_out
+    assert client.disconnects == 1
+    assert not client.is_connected
 
 
 async def test_close_stale_is_called_before_connecting(client, monkeypatch):
@@ -416,6 +428,27 @@ async def test_a_frame_taken_as_the_timeout_fires_is_kept_for_the_next_wait(clie
             with pytest.raises(asyncio.CancelledError):
                 await task
             assert replies.clear() == [b"\x01", b"\x02"]
+
+
+async def test_cancelled_notification_settle_unsubscribes(client):
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.01):
+            async with Notifications(client, "n", settle=1):
+                pass
+    assert client.subscribed == {}
+
+
+async def test_wait_for_preserves_timeout_error_from_accept(client):
+    predicate_error = TimeoutError("device error frame")
+    async with Notifications(client, "n") as replies:
+        client.reply(b"\xff")
+
+        def accept(_data):
+            raise predicate_error
+
+        with pytest.raises(TimeoutError) as info:
+            await replies.wait_for(accept, 1, step="decode")
+    assert info.value is predicate_error
 
 
 async def test_a_failed_unsubscribe_is_logged_not_raised(client, caplog):

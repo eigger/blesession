@@ -61,14 +61,24 @@ class Notifications:
 
     async def __aenter__(self) -> Notifications:
         await self._client.start_notify(self._characteristic, self._on_notify)
-        if self._settle:
-            # Some adapters/proxies drop a write issued right after the CCCD write.
-            await asyncio.sleep(self._settle)
+        try:
+            if self._settle:
+                # Some adapters/proxies drop a write issued right after the CCCD write.
+                await asyncio.sleep(self._settle)
+        except BaseException:
+            # An async context manager does not call __aexit__ if __aenter__
+            # fails. Undo the subscription before propagating cancellation or
+            # another settle error.
+            await self._stop_notify()
+            raise
         return self
 
     async def __aexit__(self, *exc_info: Any) -> None:
         # Never let an unsubscribe failure on a dropped link mask the
         # original error; ble_session() still disconnects.
+        await self._stop_notify()
+
+    async def _stop_notify(self) -> None:
         try:
             if self._client.is_connected:
                 async with asyncio.timeout(STOP_NOTIFY_TIMEOUT_S):
@@ -110,14 +120,17 @@ class Notifications:
 
         `accept` may raise to turn an error frame into the session's failure.
         """
+        timeout_scope = asyncio.timeout(timeout)
         try:
-            async with asyncio.timeout(timeout):
+            async with timeout_scope:
                 while True:
                     data = await self._next(step)
                     if accept(data):
                         return data
         except TimeoutError as exc:
-            raise NotificationTimeout(timeout, step=step) from exc
+            if timeout_scope.expired():
+                raise NotificationTimeout(timeout, step=step) from exc
+            raise
 
     def _requeue_first(self, data: bytes) -> None:
         rest = self.clear()

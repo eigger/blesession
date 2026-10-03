@@ -11,7 +11,16 @@ primary stage names and the `likely_cause_key` names are part of the
 contract: troubleshooting docs quote them and integrations translate them,
 so any change to them is at least a minor bump and is listed here.
 
-## [Unreleased]
+## [0.4.1] — 2026-10-03
+
+### Fixed
+
+- A `keep=True` session now closes a connection if connect or post-connect
+  settle fails before the client is handed to the caller.
+- A notification subscription is cleaned up if the settle wait in
+  `Notifications.__aenter__()` is cancelled or fails.
+- `Notifications.wait_for()` now preserves a `TimeoutError` raised by its
+  `accept` callback instead of reporting it as a missing response.
 
 ## [0.4.0] — 2026-10-03
 
