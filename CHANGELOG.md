@@ -13,6 +13,25 @@ so any change to them is at least a minor bump and is listed here.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-04
+
+### Added
+
+- `characteristic_or_raise(client, service_uuid, char_uuid, properties=,
+  min_write_size=, label=)`: the service / characteristic lookup every
+  protocol opens with, including the required properties and the minimum
+  write-without-response size. It raises the new `GattMismatch`.
+- `GattMismatch`: a `BleSessionError` in the `session` stage for a device
+  that does not expose what the protocol needs.
+
+### Changed
+
+- The `cause` callback of `build_report()` / `report_attempt()` now receives
+  the error as a fifth argument: `(stage, detail, error, facts, exc)`, so a
+  device sentence can test the error's type instead of matching its text.
+  Old: four arguments. New: five; a four-argument callback raises
+  `TypeError`. Add the parameter (`exc`) to yours.
+
 ## [0.5.1] — 2026-10-04
 
 ### Added

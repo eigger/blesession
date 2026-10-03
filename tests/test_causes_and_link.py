@@ -142,7 +142,7 @@ def test_a_timed_out_attempt_reports_its_own_sentence_and_key():
         operation="op",
         trace=trace,
         exc=exc,
-        cause=lambda stage, detail, error, facts: "the device's reading",
+        cause=lambda stage, detail, error, facts, exc: "the device's reading",
     )
     assert report["timed_out"] is True
     assert report["likely_cause_key"] == cause_key(stages.CONNECT, str(exc), exc=exc)
@@ -162,3 +162,18 @@ def test_failed_stage_and_detail_can_be_overridden():
     )
     assert report["failed_stage"] == "unlock"
     assert report["failed_detail"] == "part 3"
+
+
+def test_cause_callback_receives_the_error_to_test_its_type():
+    from blesession import NotificationTimeout, SessionTrace
+
+    seen = []
+
+    def cause(stage, detail, error, facts, exc):
+        seen.append(exc)
+        return "silent tag" if isinstance(exc, NotificationTimeout) else None
+
+    exc = NotificationTimeout(1, step="start")
+    report = build_report(operation="op", trace=SessionTrace(), exc=exc, cause=cause)
+    assert seen == [exc]
+    assert report["likely_cause"] == "silent tag"

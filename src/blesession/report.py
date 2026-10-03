@@ -19,9 +19,10 @@ from .causes import cause_key, generic_cause
 from .errors import AttemptTimedOut, error_text
 from .trace import SessionTrace
 
-Cause = Callable[[str | None, str | None, str, Mapping[str, Any]], str | None]
-"""(primary stage, detail, error text, radio facts) -> the device's own
-sentence, or None to fall back to the generic one."""
+Cause = Callable[[str | None, str | None, str, Mapping[str, Any], BaseException], str | None]
+"""(primary stage, detail, error text, radio facts, the error) -> the device's
+own sentence, or None to fall back to the generic one. Test the error's type
+(`isinstance(exc, NotificationTimeout)`) rather than matching its text."""
 
 FACT_KEYS: tuple[str, ...] = (
     "via",
@@ -103,7 +104,7 @@ def build_report(
         if isinstance(exc, AttemptTimedOut):
             likely, likely_key = generic_cause(stage, error, facts, exc=exc, noun=noun), generic_key
         if likely is None and cause is not None:
-            likely = cause(stage, detail, error, facts)
+            likely = cause(stage, detail, error, facts, exc)
         if likely is None:
             likely, likely_key = generic_cause(stage, error, facts, exc=exc, noun=noun), generic_key
         if likely is not None:

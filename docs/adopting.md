@@ -18,7 +18,7 @@ retry.
 
 ```json
 {
-  "requirements": ["blesession==0.5.1"]
+  "requirements": ["blesession==0.6.0"]
 }
 ```
 
@@ -77,9 +77,9 @@ class UnlockRejected(BleSessionError):
     stage = stages.AUTH
 
 
-def likely_cause(stage, detail, error, facts):
+def likely_cause(stage, detail, error, facts, exc):
     """What only this device can say. None -> the generic sentence."""
-    if "rejected" in error:
+    if isinstance(exc, UnlockRejected):
         return "The tag rejected the key: it is paired to another hub, or is a different model."
     return None
 

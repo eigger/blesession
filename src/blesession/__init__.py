@@ -20,11 +20,13 @@ from .errors import (
     AttemptTimedOut,
     BleSessionError,
     ConnectFailed,
+    GattMismatch,
     NotificationTimeout,
     SessionDropped,
     Unreachable,
     error_text,
 )
+from .gatt import characteristic_or_raise
 from .link import LinkInfo, connected_via, is_proxy, probe_link
 from .notifications import Notifications
 from .report import FACT_KEYS, SessionReports, build_report, report_attempt
@@ -33,7 +35,7 @@ from .subscribe import NOTIFY_ATTEMPTS, STOP_NOTIFY_TIMEOUT_S, start_notify_with
 from .trace import SessionTrace, traced
 from .transfer import write_chunks
 
-__version__ = "0.5.1"
+__version__ = "0.6.0"
 """The one place the version is written; pyproject.toml reads it."""
 
 __all__ = [
@@ -46,6 +48,7 @@ __all__ = [
     "AttemptTimedOut",
     "BleSessionError",
     "ConnectFailed",
+    "GattMismatch",
     "LinkInfo",
     "NotificationTimeout",
     "Notifications",
@@ -55,6 +58,7 @@ __all__ = [
     "Unreachable",
     "ble_session",
     "build_report",
+    "characteristic_or_raise",
     "cause_key",
     "connected_via",
     "default_retry_if",
