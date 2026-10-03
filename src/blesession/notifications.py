@@ -17,6 +17,7 @@ from bleak import BleakClient
 
 from .errors import NotificationTimeout, SessionDropped
 from .session import dropped_event
+from .subscribe import start_notify_with_recovery
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,6 +44,9 @@ class Notifications:
     `ble_session()` registered for this client (see `dropped_event`). Pass
     one explicitly when you own the connection yourself; pass
     `dropped=asyncio.Event()` (never set) to wait the timeout out regardless.
+
+    `recover=True` subscribes with `start_notify_with_recovery`, for a link
+    that may still carry the previous connection's subscription.
     """
 
     def __init__(
@@ -52,7 +56,9 @@ class Notifications:
         *,
         settle: float = 0.0,
         dropped: asyncio.Event | None = None,
+        recover: bool = False,
     ) -> None:
+        self._recover = recover
         self._client = client
         self._characteristic = characteristic
         self._settle = settle
@@ -60,7 +66,10 @@ class Notifications:
         self._queue: asyncio.Queue[bytes] = asyncio.Queue()
 
     async def __aenter__(self) -> Notifications:
-        await self._client.start_notify(self._characteristic, self._on_notify)
+        if self._recover:
+            await start_notify_with_recovery(self._client, self._characteristic, self._on_notify)
+        else:
+            await self._client.start_notify(self._characteristic, self._on_notify)
         try:
             if self._settle:
                 # Some adapters/proxies drop a write issued right after the CCCD write.
@@ -112,6 +121,41 @@ class Notifications:
                 return await self._next(step)
         except TimeoutError as exc:
             raise NotificationTimeout(timeout, step=step) from exc
+
+    async def next_burst(self, timeout: float, *, step: str) -> bytes:
+        """The next notification plus everything queued behind it, joined.
+
+        For a device that streams one reply across several notifications, or
+        sends unsolicited frames in a burst alongside the real one: the
+        caller reassembles frames from the bytes. Waits like `next()`.
+        """
+        return await self.next(timeout, step=step) + b"".join(self.clear())
+
+    async def request(
+        self,
+        characteristic: Any,
+        data: bytes,
+        *,
+        timeout: float,
+        step: str,
+        response: bool = False,
+        accept: Callable[[bytes], bool] | None = None,
+        pace_s: float = 0.0,
+    ) -> bytes:
+        """Write `data`, return the device's reply.
+
+        Notifications received before the write are dropped first: they
+        answer something earlier, not this request. `accept` picks the reply
+        out of several (as `wait_for`); `pace_s` is the pause between the
+        write and the wait that some tags need.
+        """
+        self.clear()
+        await self._client.write_gatt_char(characteristic, data, response=response)
+        if pace_s > 0:
+            await asyncio.sleep(pace_s)
+        if accept is None:
+            return await self.next(timeout, step=step)
+        return await self.wait_for(accept, timeout, step=step)
 
     async def wait_for(
         self, accept: Callable[[bytes], bool], timeout: float, *, step: str

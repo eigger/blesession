@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from bleak.exc import BleakError
 
 from blesession import (
     ConnectFailed,
@@ -11,9 +12,11 @@ from blesession import (
     ble_session,
     run_attempts,
     stages,
+    start_notify_with_recovery,
 )
 from blesession import notifications as notifications_mod
 from blesession import session as session_mod
+from blesession import subscribe as subscribe_mod
 from blesession.testing import FakeClient, FakeDevice, fake_connect
 
 
@@ -459,3 +462,126 @@ async def test_a_failed_unsubscribe_is_logged_not_raised(client, caplog):
         async with Notifications(client, "n"):
             pass
     assert "proxy gone" in caplog.text
+
+
+async def test_request_clears_stale_replies_writes_and_returns_the_reply(client):
+    async with Notifications(client, "n") as replies:
+        client.reply(b"\x00")  # answers something earlier
+        asyncio.get_running_loop().call_later(0.01, client.reply, b"\x01")
+        reply = await replies.request("w", b"\xaa", timeout=1, step="start", response=True)
+    assert reply == b"\x01"
+    assert client.writes == [("w", b"\xaa", True)]
+
+
+async def test_request_accept_skips_unrelated_frames(client):
+    async with Notifications(client, "n") as replies:
+        asyncio.get_running_loop().call_later(0.01, client.reply, b"\x07")
+        asyncio.get_running_loop().call_later(0.02, client.reply, b"\x02")
+        reply = await replies.request(
+            "w", b"\xaa", timeout=1, step="part", accept=lambda d: d == b"\x02"
+        )
+    assert reply == b"\x02"
+
+
+async def test_request_names_its_step_when_unanswered(client):
+    async with Notifications(client, "n") as replies:
+        with pytest.raises(NotificationTimeout) as info:
+            await replies.request("w", b"\xaa", timeout=0.01, step="start")
+    assert info.value.step == "start"
+
+
+async def test_request_paces_between_write_and_wait(client, monkeypatch):
+    sleeps = []
+
+    async def sleep(s):
+        sleeps.append(s)
+
+    monkeypatch.setattr(session_mod.asyncio, "sleep", sleep)
+    async with Notifications(client, "n") as replies:
+        asyncio.get_running_loop().call_soon(client.reply, b"\x01")
+        await replies.request("w", b"\xaa", timeout=1, step="s", pace_s=0.2)
+    assert sleeps == [0.2]
+
+
+async def test_next_burst_joins_what_arrived_together(client):
+    async with Notifications(client, "n") as replies:
+        for part in (b"\x01", b"\x02", b"\x03"):
+            client.reply(part)
+        assert await replies.next_burst(1, step="reply") == b"\x01\x02\x03"
+        assert replies.pending == 0
+        with pytest.raises(NotificationTimeout):
+            await replies.next_burst(0.01, step="reply")
+
+
+class _StaleOnce:
+    """start_notify fails with `message` `fails` times, then works."""
+
+    def __init__(self, client, message, fails=1):
+        self.client, self.message, self.fails = client, message, fails
+        self.stopped = 0
+        real_start, real_stop = client.start_notify, client.stop_notify
+
+        async def start(char, handler):
+            if self.fails:
+                self.fails -= 1
+                raise BleakError(self.message)
+            await real_start(char, handler)
+
+        async def stop(char):
+            self.stopped += 1
+            await real_stop(char)
+
+        client.start_notify, client.stop_notify = start, stop
+
+
+@pytest.fixture
+def no_sleep(monkeypatch):
+    async def sleep(_s):
+        pass
+
+    monkeypatch.setattr(subscribe_mod.asyncio, "sleep", sleep)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Notify acquired",
+        "org.bluez.Error.NotPermitted",
+        "Notifications are already enabled",
+        "Failed to register notify session",
+    ],
+)
+async def test_recovery_releases_a_stale_subscription_and_subscribes_again(
+    client, no_sleep, message
+):
+    stale = _StaleOnce(client, message)
+    async with Notifications(client, "n", recover=True) as replies:
+        client.reply(b"\x01")
+        assert await replies.next(1, step="x") == b"\x01"
+    assert stale.stopped >= 1
+
+
+async def test_recovery_only_refreshes_when_discovery_is_missing(client, no_sleep):
+    stale = _StaleOnce(client, "Service Discovery has not been performed yet")
+    await start_notify_with_recovery(client, "n", lambda *_: None)
+    assert stale.stopped == 0 and "n" in client.subscribed
+
+
+async def test_recovery_raises_other_errors_at_once(client, no_sleep):
+    _StaleOnce(client, "Device not found", fails=5)
+    with pytest.raises(BleakError, match="Device not found"):
+        await start_notify_with_recovery(client, "n", lambda *_: None)
+
+
+async def test_recovery_raises_the_last_error_when_attempts_run_out(client, no_sleep):
+    stale = _StaleOnce(client, "Notify acquired", fails=10)
+    with pytest.raises(BleakError, match="Notify acquired"):
+        await start_notify_with_recovery(client, "n", lambda *_: None, attempts=2)
+    assert stale.fails == 8
+
+
+async def test_plain_notifications_do_not_retry(client):
+    _StaleOnce(client, "Notify acquired")
+    with pytest.raises(BleakError):
+        async with Notifications(client, "n"):
+            pass

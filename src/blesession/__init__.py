@@ -29,6 +29,7 @@ from .link import LinkInfo, connected_via, is_proxy, probe_link
 from .notifications import STOP_NOTIFY_TIMEOUT_S, Notifications
 from .report import FACT_KEYS, SessionReports, build_report, report_attempt
 from .session import DISCONNECT_TIMEOUT_S, ble_session, dropped_event, still_up
+from .subscribe import NOTIFY_ATTEMPTS, start_notify_with_recovery
 from .trace import SessionTrace, traced
 
 __version__ = "0.4.1"
@@ -38,6 +39,7 @@ __all__ = [
     "CAUSES",
     "DISCONNECT_TIMEOUT_S",
     "FACT_KEYS",
+    "NOTIFY_ATTEMPTS",
     "STOP_NOTIFY_TIMEOUT_S",
     "Attempt",
     "AttemptTimedOut",
@@ -64,6 +66,7 @@ __all__ = [
     "report_attempt",
     "run_attempts",
     "stages",
+    "start_notify_with_recovery",
     "still_up",
     "traced",
 ]

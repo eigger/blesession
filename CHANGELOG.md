@@ -13,6 +13,21 @@ so any change to them is at least a minor bump and is listed here.
 
 ## [Unreleased]
 
+### Added
+
+- `Notifications.request()`: clear stale replies, write, and return the reply
+  (or the first one `accept` takes), with an optional pause between the
+  write and the wait. It replaces the clear/write/`next` triple that
+  integrations repeat for every command.
+- `Notifications.next_burst()`: the next notification plus everything queued
+  behind it, joined, for devices that spread one reply over several
+  notifications.
+- `start_notify_with_recovery()` and `Notifications(recover=True)`: a
+  subscription that fails because the previous connection's subscription is
+  still held (BlueZ "notify acquired", ESPHome proxy "already enabled") is
+  released and retried up to `NOTIFY_ATTEMPTS` times. Off by default, so
+  `Notifications` behaves as before.
+
 ### Changed
 
 - PyPI publishing now starts when a GitHub Release is published, using a
