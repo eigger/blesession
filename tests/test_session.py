@@ -15,7 +15,6 @@ from blesession import (
     start_notify_with_recovery,
     write_chunks,
 )
-from blesession import notifications as notifications_mod
 from blesession import session as session_mod
 from blesession import subscribe as subscribe_mod
 from blesession import transfer as transfer_mod
@@ -228,7 +227,7 @@ async def test_an_unwatched_client_waits_its_timeout_out():
 async def test_unsubscribe_is_bounded_so_a_dead_proxy_cannot_hang_the_exit(client, monkeypatch):
     """__aexit__ runs after the attempt bound has already fired, so its own
     bound is the only thing between a wedged proxy and a hung lock."""
-    monkeypatch.setattr(notifications_mod, "STOP_NOTIFY_TIMEOUT_S", 0.01)
+    monkeypatch.setattr(subscribe_mod, "STOP_NOTIFY_TIMEOUT_S", 0.01)
     hang = asyncio.Event()
 
     async def never_returns(_characteristic):
@@ -460,7 +459,7 @@ async def test_a_failed_unsubscribe_is_logged_not_raised(client, caplog):
     import logging
 
     client.fail_stop_notify = OSError("proxy gone")
-    with caplog.at_level(logging.DEBUG, logger="blesession.notifications"):
+    with caplog.at_level(logging.DEBUG, logger="blesession.subscribe"):
         async with Notifications(client, "n"):
             pass
     assert "proxy gone" in caplog.text

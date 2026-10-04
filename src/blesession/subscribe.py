@@ -99,3 +99,26 @@ async def start_notify_with_recovery(
                     pass
             await _refresh_services(client)
             await asyncio.sleep(0.25 * attempt)
+
+
+async def stop_notify_best_effort(
+    client: BleakClient,
+    characteristic: Any,
+    *,
+    timeout: float | None = None,
+) -> None:
+    """Unsubscribe without letting the unsubscribe hide the real outcome.
+
+    For cleanup that runs after the work succeeded or failed: it does nothing
+    on a link that is already down, is bounded by `timeout` (a proxy that
+    stopped answering would otherwise hang the cleanup, and whatever holds the
+    lock with it), and logs instead of raising. `Notifications` unsubscribes
+    through this; use it directly for a subscription you made yourself.
+    `timeout` defaults to `STOP_NOTIFY_TIMEOUT_S`, read at call time.
+    """
+    try:
+        if client.is_connected:
+            async with asyncio.timeout(STOP_NOTIFY_TIMEOUT_S if timeout is None else timeout):
+                await client.stop_notify(characteristic)
+    except Exception as exc:  # noqa: BLE001 - never mask the session's error
+        _LOGGER.debug("stop_notify on %s failed (ignored): %s", characteristic, exc)

@@ -13,6 +13,29 @@ so any change to them is at least a minor bump and is listed here.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-10-04
+
+The unsubscribe `Notifications` already did, for an integration's own
+subscription, and `response=None` on the write path.
+
+### Added
+
+- `stop_notify_best_effort(client, characteristic, *, timeout=None)`:
+  the unsubscribe `Notifications` already did, for a subscription the
+  integration made itself. Skipped on a link that is down, bounded, never raises.
+
+### Changed
+
+- `guarded_write()`, `write_chunks()` and `Notifications.request()` accept
+  `response=None`, which passes `None` through so the backend picks the write
+  type, as bleak's `write_gatt_char` does when called without `response`.
+  Before, the annotation was `bool` (the call already worked at runtime); the
+  default is still `False`. `FakeClient.write_gatt_char` takes it too.
+- The log line for a failed unsubscribe now comes from the `blesession.subscribe`
+  logger (it was `blesession.notifications`), and the module attribute
+  `blesession.notifications.STOP_NOTIFY_TIMEOUT_S` is gone: the bound is
+  `blesession.subscribe.STOP_NOTIFY_TIMEOUT_S`, read when the unsubscribe runs.
+
 ## [0.7.0] — 2026-10-04
 
 The shape an integration depends on, made explicit: one failure object for
