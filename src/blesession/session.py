@@ -7,7 +7,7 @@ import contextlib
 import logging
 from collections.abc import AsyncIterator, Callable
 from time import perf_counter
-from typing import Any, cast
+from typing import Any
 from weakref import WeakKeyDictionary
 
 import bleak
@@ -46,7 +46,7 @@ def current_client_class() -> type[BleakClient]:
     at import time means this package works no matter which was imported
     first.
     """
-    return cast("type[BleakClient]", bleak.BleakClient)
+    return bleak.BleakClient
 
 
 def dropped_event(client: Any) -> asyncio.Event | None:
