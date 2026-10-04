@@ -273,8 +273,12 @@ def test_a_failure_taking_callback_with_an_optional_extra_is_not_legacy(recwarn)
     assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
 
 
-def test_the_deprecation_points_at_the_callers_line_and_is_logged_once(caplog):
+def test_the_deprecation_points_at_the_callers_line_and_is_logged_once(caplog, monkeypatch):
     import warnings
+
+    from blesession import report as report_mod
+
+    monkeypatch.setattr(report_mod, "_WARNED", set())
 
     def legacy(stage, detail, error, facts):
         return None
@@ -311,3 +315,23 @@ def test_a_too_small_write_size_and_a_failed_lookup_are_retryable_a_missing_prof
     with pytest.raises(GattMismatch) as failed:
         characteristic_or_raise(client, "svc", "ch")
     assert failed.value.retryable is True
+
+
+def test_each_distinct_callback_is_logged_even_when_bound_methods_share_an_id(caplog, monkeypatch):
+    from blesession import report as report_mod
+
+    monkeypatch.setattr(report_mod, "_WARNED", set())
+
+    class Device:
+        def a(self, stage, detail, error, facts):
+            return None
+
+        def b(self, stage, detail, error, facts):
+            return None
+
+    device = Device()
+    with pytest.warns(DeprecationWarning):
+        _report(device.a)
+        _report(device.b)
+        _report(device.a)  # the same definition again: not logged twice
+    assert len([r for r in caplog.records if "deprecated" in r.getMessage()]) == 2

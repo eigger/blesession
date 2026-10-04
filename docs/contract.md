@@ -183,7 +183,7 @@ device and you want the generic `write_timeout` reading for a hung write.
 
 | class | raised when | `stage` | `retryable` | also carries |
 |---|---|---|---|---|
-| `BleSessionError` | base class | per subclass | `True` | `stage`, `detail`, `retryable` |
+| `BleSessionError` | base class: `BleSessionError(message="", *, stage=None, detail=None, retryable=None)` | per subclass | `True` | `stage`, `detail`, `retryable` |
 | `Unreachable` | no radio has a handle for the address | `unreachable` | `True` | |
 | `ConnectFailed` | `establish_connection` raised, or the link dropped in the settle | `connect` | `True` | `detail="settle"` for a settle drop |
 | `GattMismatch` | the device lacks the service, characteristic, property or write size | `session` | **`False`**, `True` for a too-small write size or a failed lookup (§3.4) | |
@@ -280,9 +280,10 @@ error that lost its type, such as a proxy's backend wording.
 
 1. A **stage map** from your stage names to §4.
 2. Your **protocol frames**, with a `step` on every wait.
-3. **Errors** derived from `BleSessionError` (or `DeviceError`), so one
-   `except ConnectionError` covers them; `retryable=False` where a retry
-   cannot help.
+3. **Errors** derived from `BleSessionError` (or `DeviceError`, for a fault
+   the device reported: `DeviceError(message, code=, retryable=)`), so one
+   `except ConnectionError` covers them; `retryable=False`, as a class
+   attribute or per instance, where a retry cannot help.
 4. A **`cause` callback** with the sentences only your device can say; an
    empty one is fine.
 5. The **lock**, its scope, the retry count, the attempt bound, the pause.

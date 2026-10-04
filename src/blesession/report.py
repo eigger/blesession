@@ -54,7 +54,7 @@ _LEGACY_ARGS = (
     "(stage, detail, error, facts)",
     "(stage, detail, error, facts, exc)",
 )
-_WARNED: set[int] = set()
+_WARNED: set[tuple[str, str, int]] = set()
 _PACKAGE_DIR = os.path.dirname(__file__)
 
 
@@ -80,6 +80,23 @@ def _legacy_shape(cause: Callable[..., Any]) -> int | None:
     return 5 if len(positional) >= 5 else 4
 
 
+def _identity(cause: Callable[..., Any]) -> tuple[str, str, int]:
+    """A key that names the callback's definition, not the object.
+
+    Bound methods are new objects on every access, and the id of a freed one is
+    handed to the next, so identity would both repeat the warning and silence a
+    different callback. The code that defines it is what stays the same.
+    """
+    func = getattr(cause, "__func__", cause)
+    code = getattr(func, "__code__", None)
+    qualname = getattr(func, "__qualname__", type(func).__qualname__)
+    return (
+        getattr(func, "__module__", None) or "",
+        qualname,
+        code.co_firstlineno if code is not None else 0,
+    )
+
+
 def _call_cause(cause: Callable[..., str | None], failure: Failure) -> str | None:
     """Call `cause` with a `Failure`, or with the pre-0.7 positional arguments.
 
@@ -96,8 +113,9 @@ def _call_cause(cause: Callable[..., str | None], failure: Failure) -> str | Non
         "removed in blesession 1.0; take one blesession.Failure instead"
     )
     warnings.warn(message, DeprecationWarning, skip_file_prefixes=(_PACKAGE_DIR,))
-    if id(cause) not in _WARNED:
-        _WARNED.add(id(cause))
+    key = _identity(cause)
+    if key not in _WARNED:
+        _WARNED.add(key)
         _LOGGER.warning("%s (%r)", message, cause)
     args = (failure.stage, failure.detail, failure.error, failure.facts)
     return cause(*args) if shape == 4 else cause(*args, failure.exc)

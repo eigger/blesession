@@ -306,22 +306,26 @@ allows, and writes them with `write_chunks()`:
 ```python
 from blesession import characteristic_or_raise, write_chunks
 
+HEADER = 4  # this protocol prefixes each chunk with its 4-byte offset
+
 async with ble_session(device, trace=trace, settle_s=0.5) as client:
     char = characteristic_or_raise(
         client,
         SERVICE_UUID,
         WRITE_UUID,
         properties=("write-without-response",),
-        min_write_size=20,
+        min_write_size=HEADER + 16,                  # room for the header and some data
         label="ACME",
     )
-    size = min(MAX_CHUNK, char.max_write_without_response_size)
+    # `size` is the data in a chunk; `wrap` adds the header, so the write is
+    # `size + HEADER` and must still fit what the link allows.
+    size = min(MAX_CHUNK, char.max_write_without_response_size - HEADER)
     with trace.timed("transfer"):
         await write_chunks(
             client, char, payload, size,
             step="upload",
             gap_s=pacing_s,                          # yours: pacing is policy
-            wrap=lambda offset, chunk: offset.to_bytes(4, "little") + chunk,
+            wrap=lambda offset, chunk: offset.to_bytes(HEADER, "little") + chunk,
             on_chunk=lambda sent: trace.note(sends=sent),
         )
 ```

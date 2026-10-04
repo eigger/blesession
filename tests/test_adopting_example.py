@@ -54,17 +54,21 @@ async def test_the_documented_payload_example_runs(monkeypatch):
     from blesession.testing import FakeClient, FakeDevice, fake_connect
 
     client = FakeClient()
-    client.add_characteristic("svc", "wr", properties=("write-without-response",))
+    client.add_characteristic(
+        "svc", "wr", properties=("write-without-response",), max_write_without_response_size=24
+    )
     monkeypatch.setattr(session_mod, "establish_connection", fake_connect(client))
     source = _block("## A protocol with a payload")
     body = "\n".join(f"    {line}" for line in source.splitlines())
     code = (
         "async def run(device, trace, SERVICE_UUID, WRITE_UUID, MAX_CHUNK, payload, pacing_s):\n"
-        + body.replace("    from blesession import", "    from blesession import", 1)
+        + body
         + "\n"
     )
     namespace = {"ble_session": ble_session}
     exec(compile(code, "adopting.md:payload", "exec"), namespace)
     trace = SessionTrace()
-    await namespace["run"](FakeDevice(), trace, "svc", "wr", 20, b"x" * 50, 0.0)
+    # The link allows 24 bytes a write; the header takes 4, so 20 bytes of data fit.
+    await namespace["run"](FakeDevice(), trace, "svc", "wr", 100, b"x" * 50, 0.0)
     assert len(client.writes) == 3 and trace.facts["sends"] == 3
+    assert all(len(data) <= 24 for _char, data, _response in client.writes)

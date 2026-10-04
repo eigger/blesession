@@ -66,6 +66,10 @@ def test_a_report_only_uses_documented_keys():
             attempts=3,
         )
         assert set(report) <= own, set(report) - own
+        # Their own keys come first, in the documented order.
+        mine = [key for key in report if key in REPORT_KEYS]
+        assert mine == [key for key in REPORT_KEYS if key in report]
+        assert list(report)[: len(mine)] == mine
 
 
 def test_every_primary_stage_is_in_the_contract():
