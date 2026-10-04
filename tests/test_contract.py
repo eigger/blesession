@@ -335,3 +335,22 @@ def test_each_distinct_callback_is_logged_even_when_bound_methods_share_an_id(ca
         _report(device.b)
         _report(device.a)  # the same definition again: not logged twice
     assert len([r for r in caplog.records if "deprecated" in r.getMessage()]) == 2
+
+
+def test_two_partials_of_different_callbacks_are_each_logged(caplog, monkeypatch):
+    import functools
+
+    from blesession import report as report_mod
+
+    monkeypatch.setattr(report_mod, "_WARNED", set())
+
+    def one(prefix, stage, detail, error, facts):
+        return None
+
+    def two(prefix, stage, detail, error, facts):
+        return None
+
+    with pytest.warns(DeprecationWarning):
+        _report(functools.partial(one, "x"))
+        _report(functools.partial(two, "x"))
+    assert len([r for r in caplog.records if "deprecated" in r.getMessage()]) == 2

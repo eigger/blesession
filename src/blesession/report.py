@@ -10,6 +10,7 @@ session, and the last one that failed.
 
 from __future__ import annotations
 
+import functools
 import inspect
 import logging
 import os
@@ -88,6 +89,9 @@ def _identity(cause: Callable[..., Any]) -> tuple[str, str, int]:
     different callback. The code that defines it is what stays the same.
     """
     func = getattr(cause, "__func__", cause)
+    while isinstance(func, functools.partial):  # a partial is its wrapped function
+        func = func.func
+    func = getattr(func, "__func__", func)
     code = getattr(func, "__code__", None)
     qualname = getattr(func, "__qualname__", type(func).__qualname__)
     return (
