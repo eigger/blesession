@@ -76,8 +76,12 @@ type OnAttempt[T] = Callable[[Attempt[T]], None]
 
 
 def default_retry_if(attempt: Attempt[Any]) -> bool:
-    """Retry anything but a timed-out attempt."""
-    return not attempt.timed_out
+    """Retry anything but a timed-out attempt or an error that says it is final.
+
+    An error is final when it carries `retryable = False` (`GattMismatch`, or
+    a `DeviceError(retryable=False)`); any other error is assumed retryable.
+    """
+    return not attempt.timed_out and getattr(attempt.error, "retryable", True)
 
 
 async def run_attempts[T](

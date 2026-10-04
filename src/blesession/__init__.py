@@ -20,26 +20,29 @@ from .errors import (
     AttemptTimedOut,
     BleSessionError,
     ConnectFailed,
+    DeviceError,
     GattMismatch,
     NotificationTimeout,
     SessionDropped,
     Unreachable,
+    WriteTimeout,
     error_text,
 )
 from .gatt import characteristic_or_raise
 from .link import LinkInfo, connected_via, is_proxy, probe_link
 from .notifications import Notifications
-from .report import FACT_KEYS, SessionReports, build_report, report_attempt
+from .report import FACT_KEYS, Cause, Failure, SessionReports, build_report, report_attempt
 from .session import DISCONNECT_TIMEOUT_S, ble_session, dropped_event, still_up
 from .subscribe import NOTIFY_ATTEMPTS, STOP_NOTIFY_TIMEOUT_S, start_notify_with_recovery
 from .trace import SessionTrace, traced
-from .transfer import write_chunks
+from .transfer import WRITE_TIMEOUT_S, guarded_write, write_chunks
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 """The one place the version is written; pyproject.toml reads it."""
 
 __all__ = [
     "CAUSES",
+    "Cause",
     "DISCONNECT_TIMEOUT_S",
     "FACT_KEYS",
     "NOTIFY_ATTEMPTS",
@@ -48,6 +51,8 @@ __all__ = [
     "AttemptTimedOut",
     "BleSessionError",
     "ConnectFailed",
+    "DeviceError",
+    "Failure",
     "GattMismatch",
     "LinkInfo",
     "NotificationTimeout",
@@ -56,6 +61,8 @@ __all__ = [
     "SessionReports",
     "SessionTrace",
     "Unreachable",
+    "WRITE_TIMEOUT_S",
+    "WriteTimeout",
     "ble_session",
     "build_report",
     "characteristic_or_raise",
@@ -65,6 +72,7 @@ __all__ = [
     "dropped_event",
     "error_text",
     "generic_cause",
+    "guarded_write",
     "is_proxy",
     "placement",
     "probe_link",

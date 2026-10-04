@@ -7,18 +7,22 @@ from types import SimpleNamespace
 import pytest
 
 from blesession import BleSessionError, GattMismatch, characteristic_or_raise, stages
+from blesession.testing import FakeClient, FakeService
 
 SERVICE = "0000ffe0-0000-1000-8000-00805f9b34fb"
 CHAR = "0000ffe1-0000-1000-8000-00805f9b34fb"
 
 
 def _client(*, service=True, char=True, properties=("write-without-response",), size=244):
-    characteristic = SimpleNamespace(
-        uuid=CHAR, properties=list(properties), max_write_without_response_size=size
-    )
-    svc = SimpleNamespace(get_characteristic=lambda uuid: characteristic if char else None)
-    services = SimpleNamespace(get_service=lambda uuid: svc if service else None)
-    return SimpleNamespace(services=services), characteristic
+    client = FakeClient()
+    characteristic = None
+    if service and char:
+        characteristic = client.add_characteristic(
+            SERVICE, CHAR, properties=properties, max_write_without_response_size=size
+        )
+    elif service:
+        client.services.by_uuid[SERVICE.lower()] = FakeService(SERVICE)
+    return client, characteristic
 
 
 def test_returns_the_characteristic():
@@ -90,3 +94,8 @@ def test_the_cause_key_holds_inside_a_device_stage():
     report = build_report(operation="write", trace=trace, exc=info.value, noun="tag")
     assert report["failed_stage"] == stages.AUTH
     assert report["likely_cause_key"] == "session.gatt_mismatch"
+
+
+def test_the_fake_finds_uuids_case_insensitively_like_bleak():
+    client, characteristic = _client()
+    assert characteristic_or_raise(client, SERVICE.upper(), CHAR.upper()) is characteristic

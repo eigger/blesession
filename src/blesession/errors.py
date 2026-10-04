@@ -17,6 +17,10 @@ class BleSessionError(ConnectionError):
 
     stage: str | None = None
     detail: str | None = None
+    retryable: bool = True
+    """Whether another attempt can change the outcome. `default_retry_if`
+    reads it; an error that is deterministic (the device lacks the profile)
+    says False so no integration has to special-case it."""
 
     def __init__(self, message: str = "", *, stage: str | None = None, detail: str | None = None):
         super().__init__(message)
@@ -64,6 +68,34 @@ class GattMismatch(BleSessionError):
     """
 
     stage = stages.SESSION
+    retryable = False
+
+
+class DeviceError(BleSessionError):
+    """The device answered, and the answer was an error.
+
+    A device-reported fault (an error frame, a rejected key, a NAK) as
+    opposed to silence or a lost link. `code` is the device's own code, when
+    it has one. The wording and what each code means stay in the integration:
+    raise this (or a subclass) from the protocol code, test its type and
+    `code` in the `cause` callback, and the generic sentences leave it alone.
+    `retryable=False` stops the attempt loop for a fault a retry cannot fix
+    (a rejected key).
+    """
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        code: int | str | None = None,
+        retryable: bool | None = None,
+        stage: str | None = None,
+        detail: str | None = None,
+    ) -> None:
+        super().__init__(message, stage=stage, detail=detail)
+        self.code = code
+        if retryable is not None:
+            self.retryable = retryable
 
 
 class NotificationTimeout(BleSessionError, TimeoutError):
@@ -79,6 +111,23 @@ class NotificationTimeout(BleSessionError, TimeoutError):
         )
         self.step = step
         self.timeout = timeout
+
+
+class WriteTimeout(NotificationTimeout):
+    """A write did not complete in time: the adapter or proxy stopped taking data.
+
+    A `NotificationTimeout` (so `except NotificationTimeout` and
+    `except TimeoutError` keep working, and it carries `step` and `timeout`),
+    but not silence from the device: the write never returned. The reports
+    tell the two apart.
+    """
+
+    def __init__(self, timeout: float, *, step: str) -> None:
+        super().__init__(
+            timeout,
+            step=step,
+            message=f"A write did not complete within {timeout:g}s during {step}",
+        )
 
 
 class AttemptTimedOut(BleSessionError, TimeoutError):

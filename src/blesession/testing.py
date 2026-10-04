@@ -6,9 +6,13 @@ way everywhere.
 
     client = FakeClient()
     client.reply(b"\x01")                    # queued for the next start_notify handler
+    client.on_write = lambda char, data: client.reply(b"\x02")   # answer each command
     async with Notifications(client, "uuid") as replies:
         assert await replies.next(1, step="x") == b"\x01"
     client.drop()                             # link gone: is_connected False, callback fired
+
+    client.add_characteristic(SERVICE, CHAR)  # what characteristic_or_raise() looks up
+    client.write_delay_s = 3600               # a write that hangs (WriteTimeout)
 """
 
 from __future__ import annotations
@@ -16,6 +20,42 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from typing import Any
+
+
+class FakeCharacteristic:
+    """The parts of a bleak characteristic a protocol checks."""
+
+    def __init__(
+        self,
+        uuid: str,
+        *,
+        properties: tuple[str, ...] = ("write-without-response", "notify"),
+        max_write_without_response_size: int = 244,
+    ) -> None:
+        self.uuid = uuid
+        self.properties = list(properties)
+        self.max_write_without_response_size = max_write_without_response_size
+
+
+class FakeService:
+    """A service: `get_characteristic(uuid)`, case-insensitive like bleak."""
+
+    def __init__(self, uuid: str) -> None:
+        self.uuid = uuid
+        self.characteristics: dict[str, FakeCharacteristic] = {}
+
+    def get_characteristic(self, uuid: str) -> FakeCharacteristic | None:
+        return self.characteristics.get(str(uuid).lower())
+
+
+class FakeServices:
+    """`client.services`: `get_service(uuid)`, None when the device lacks it."""
+
+    def __init__(self) -> None:
+        self.by_uuid: dict[str, FakeService] = {}
+
+    def get_service(self, uuid: str) -> FakeService | None:
+        return self.by_uuid.get(str(uuid).lower())
 
 
 class FakeClient:
@@ -32,6 +72,11 @@ class FakeClient:
         self.fail_disconnect: BaseException | None = None
         self.fail_write: BaseException | None = None
         self.disconnect_delay_s: float = 0.0
+        self.on_write: Callable[[Any, bytes], None] | None = None
+        """Called after each recorded write: answer a command with `reply()`."""
+        self.write_delay_s: float = 0.0
+        """A write that takes this long (use a large value for one that hangs)."""
+        self.services = FakeServices()
         self.disconnected_callback: Callable[[Any], None] | None = None
         """Set by fake_connect(); fired by drop() and disconnect(), as bleak does."""
         self._pending: list[bytes] = []
@@ -56,9 +101,13 @@ class FakeClient:
     async def write_gatt_char(
         self, characteristic: Any, data: bytes, response: bool = False
     ) -> None:
+        if self.write_delay_s:
+            await asyncio.sleep(self.write_delay_s)
         if self.fail_write is not None:
             raise self.fail_write
         self.writes.append((characteristic, bytes(data), response))
+        if self.on_write is not None:
+            self.on_write(characteristic, bytes(data))
 
     async def disconnect(self) -> None:
         self.disconnects += 1
@@ -69,6 +118,24 @@ class FakeClient:
         self.drop()
 
     # ── test controls ────────────────────────────────────────────────────
+
+    def add_characteristic(
+        self,
+        service_uuid: str,
+        char_uuid: str,
+        *,
+        properties: tuple[str, ...] = ("write-without-response", "notify"),
+        max_write_without_response_size: int = 244,
+    ) -> FakeCharacteristic:
+        """Expose a characteristic, so `characteristic_or_raise()` finds it."""
+        service = self.services.by_uuid.setdefault(service_uuid.lower(), FakeService(service_uuid))
+        char = FakeCharacteristic(
+            char_uuid,
+            properties=properties,
+            max_write_without_response_size=max_write_without_response_size,
+        )
+        service.characteristics[char_uuid.lower()] = char
+        return char
 
     def reply(self, data: bytes, characteristic: Any = None) -> None:
         """Deliver a notification now, or queue it for the next subscriber."""

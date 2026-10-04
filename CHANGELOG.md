@@ -13,6 +13,51 @@ so any change to them is at least a minor bump and is listed here.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-10-04
+
+The shape an integration depends on, made explicit: one failure object for
+the `cause` callback, one write primitive, errors that say whether a retry can
+help, and a contract document that the build keeps in step with the code.
+
+### Added
+
+- `docs/contract.md`: every public name with its tier, what each piece
+  guarantees, every error, report key and cause key, the callback shapes, what
+  the integration provides, and the versioning and deprecation rule.
+  `tests/test_docs_contract.py` fails when the code gains a name, stage, error,
+  report key or cause key that the page does not mention.
+- `Failure(stage, detail, error, exc, facts)` and the `Cause` type: what a
+  `cause` callback receives.
+- `guarded_write()`: one write with the drop check and a bound, shared by
+  `Notifications.request()` and `write_chunks()`. `WRITE_TIMEOUT_S` (10 s).
+- `WriteTimeout`, a `NotificationTimeout` raised when a write does not return.
+  Its generic sentence has its own key, `write_timeout`.
+- `BleSessionError.retryable` and `DeviceError(message, code=, retryable=)`:
+  an error says whether another attempt can change the outcome, and an
+  integration has a base type for a fault its device reported.
+- `FakeClient.add_characteristic()` and `.services`, `.on_write` and
+  `.write_delay_s`, so `characteristic_or_raise()`, a command/answer exchange
+  and a hung write are testable without a hand-made mock.
+
+### Changed
+
+- The `cause` callback takes one `Failure`. Old: `(stage, detail, error,
+  facts)` (0.5) or `(stage, detail, error, facts, exc)` (0.6). New:
+  `cause(failure)`. The two older shapes still work and raise a
+  `DeprecationWarning`; they are removed in 1.0.
+- `write_chunks()` bounds each write (`write_timeout=`, default
+  `WRITE_TIMEOUT_S`; `None` for the old unbounded behaviour). Old: a chunk write
+  that hung ran to the attempt bound. New: it raises `WriteTimeout` naming the
+  step after 10 s.
+- A write that times out in `Notifications.request()` raises `WriteTimeout`
+  (a `NotificationTimeout`, same `step` and `timeout`), not a plain
+  `NotificationTimeout`.
+- `default_retry_if` also stops at an error with `retryable = False`.
+  `GattMismatch` is one: a device that lacks the profile was retried to
+  `max_attempts` before.
+- `likely_cause_key` has a new value, `write_timeout`, for a `WriteTimeout`
+  (before: `transfer.no_answer` and its siblings, by stage).
+
 ## [0.6.0] — 2026-10-04
 
 ### Added

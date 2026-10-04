@@ -14,8 +14,48 @@ from typing import Any
 
 from bleak import BleakClient
 
-from .errors import SessionDropped
+from .errors import SessionDropped, WriteTimeout
 from .session import dropped_event
+
+WRITE_TIMEOUT_S = 10.0
+"""The default bound on one write. A GATT write has no timeout of its own; a
+proxy that died mid-transfer leaves it hanging until the attempt bound fires.
+This is the shorter, per-write limit under that bound; `None` removes it."""
+
+
+async def guarded_write(
+    client: BleakClient,
+    characteristic: Any,
+    data: bytes,
+    *,
+    step: str,
+    response: bool = False,
+    timeout: float | None = WRITE_TIMEOUT_S,
+    dropped: asyncio.Event | None = None,
+    phase: str = "before",
+) -> None:
+    """One write with the library's guarantees: the one place they live.
+
+    A link already down raises `SessionDropped` naming `step` (`phase` says
+    whether that was "before" or "during" it), instead of whatever the backend
+    raises for a write to a dead link; a write that does not return within
+    `timeout` raises `WriteTimeout` naming `step`. `dropped` defaults to the
+    event `ble_session()` registered for `client`.
+
+    `Notifications.request()` and `write_chunks()` both write through this, so
+    a protocol that mixes them gets the same behaviour from each.
+    """
+    if dropped is None:
+        dropped = dropped_event(client)
+    if dropped is not None and dropped.is_set():
+        raise SessionDropped(f"The link dropped {phase} {step}", detail=step)
+    try:
+        async with asyncio.timeout(timeout):
+            await client.write_gatt_char(characteristic, data, response=response)
+    except TimeoutError as exc:
+        if timeout is None:
+            raise
+        raise WriteTimeout(timeout, step=step) from exc
 
 
 async def write_chunks(
@@ -29,6 +69,7 @@ async def write_chunks(
     gap_s: float = 0.0,
     wrap: Callable[[int, bytes], bytes] | None = None,
     on_chunk: Callable[[int], None] | None = None,
+    write_timeout: float | None = WRITE_TIMEOUT_S,
 ) -> int:
     """Write `data` to `characteristic` in chunks of at most `size` bytes.
 
@@ -37,21 +78,27 @@ async def write_chunks(
     chunk; `on_chunk(sent)` is called after each write, so the progress of a
     transfer that later fails is still known to the caller's trace.
 
-    A link that is down ends the transfer with `SessionDropped` naming `step`,
-    before the next write, instead of whatever the backend raises for a write
-    to a dead link. An empty `data` writes nothing.
+    Each write goes through `guarded_write()`: a link that is down ends the
+    transfer with `SessionDropped` naming `step`, and a write that does not
+    return within `write_timeout` (default `WRITE_TIMEOUT_S`, `None` for no
+    bound) with `WriteTimeout`. An empty `data` writes nothing.
     """
     if size < 1:
         raise ValueError(f"size must be at least 1, not {size}")
-    dropped = dropped_event(client)
     sent = 0
     for offset in range(0, len(data), size):
-        if dropped is not None and dropped.is_set():
-            raise SessionDropped(f"The link dropped during {step}", detail=step)
         chunk = data[offset : offset + size]
         if wrap is not None:
             chunk = wrap(offset, chunk)
-        await client.write_gatt_char(characteristic, chunk, response=response)
+        await guarded_write(
+            client,
+            characteristic,
+            chunk,
+            step=step,
+            response=response,
+            timeout=write_timeout,
+            phase="during",
+        )
         sent += 1
         if on_chunk is not None:
             on_chunk(sent)

@@ -10,6 +10,8 @@ session, and the last one that failed.
 
 from __future__ import annotations
 
+import inspect
+import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -19,10 +21,62 @@ from .causes import cause_key, generic_cause
 from .errors import AttemptTimedOut, error_text
 from .trace import SessionTrace
 
-Cause = Callable[[str | None, str | None, str, Mapping[str, Any], BaseException], str | None]
-"""(primary stage, detail, error text, radio facts, the error) -> the device's
-own sentence, or None to fall back to the generic one. Test the error's type
-(`isinstance(exc, NotificationTimeout)`) rather than matching its text."""
+
+@dataclass(frozen=True)
+class Failure:
+    """What the `cause` callback is told about a failed session.
+
+    One object rather than a list of arguments, so a field added later does
+    not break every integration's callback.
+
+    `stage` is the primary stage the failure happened in (`stages.AUTH`, ...)
+    and `detail` the device's own stage name when it differs; `exc` is the
+    error itself (test its type: `isinstance(failure.exc, NotificationTimeout)`);
+    `error` its text; `facts` the radio facts (`via`, `rssi`, `paths`, ...).
+    """
+
+    stage: str | None
+    detail: str | None
+    error: str
+    exc: BaseException
+    facts: Mapping[str, Any]
+
+
+Cause = Callable[[Failure], str | None]
+"""The device's own sentence for a failure, or None to fall back to the
+generic one. Take one `Failure`."""
+
+_LEGACY_ARGS = (
+    "(stage, detail, error, facts)",
+    "(stage, detail, error, facts, exc)",
+)
+
+
+def _call_cause(cause: Callable[..., str | None], failure: Failure) -> str | None:
+    """Call `cause` with a `Failure`, or with the pre-0.7 positional arguments.
+
+    The two older shapes, `(stage, detail, error, facts)` and
+    `(stage, detail, error, facts, exc)`, still work and raise a
+    `DeprecationWarning`; they go in 1.0.
+    """
+    try:
+        params = list(inspect.signature(cause).parameters.values())
+    except (TypeError, ValueError):
+        return cause(failure)
+    if not any(p.kind is p.VAR_POSITIONAL for p in params):
+        positional = [p for p in params if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+        count = len([p for p in positional if p.default is p.empty]) or len(positional)
+        if count in (4, 5):
+            warnings.warn(
+                f"A `cause` callback taking {_LEGACY_ARGS[count - 4]} is deprecated; "
+                "take one blesession.Failure instead",
+                DeprecationWarning,
+                stacklevel=4,
+            )
+            args = (failure.stage, failure.detail, failure.error, failure.facts)
+            return cause(*args) if count == 4 else cause(*args, failure.exc)
+    return cause(failure)
+
 
 FACT_KEYS: tuple[str, ...] = (
     "via",
@@ -104,7 +158,7 @@ def build_report(
         if isinstance(exc, AttemptTimedOut):
             likely, likely_key = generic_cause(stage, error, facts, exc=exc, noun=noun), generic_key
         if likely is None and cause is not None:
-            likely = cause(stage, detail, error, facts, exc)
+            likely = _call_cause(cause, Failure(stage, detail, error, exc, facts))
         if likely is None:
             likely, likely_key = generic_cause(stage, error, facts, exc=exc, noun=noun), generic_key
         if likely is not None:

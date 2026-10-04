@@ -120,8 +120,8 @@ async def test_report_order_and_cause_precedence(monkeypatch, no_sleep):
     result = await run_attempts(attempt, stage_map={"start": stages.AUTH})
     facts = {"rssi": -90, "via": "office", "via_type": "proxy", "paths": 1}
 
-    def cause(stage, detail, error, f, exc):
-        return "rejected: not a WOLINK tag" if "device error 5" in error else None
+    def cause(failure):
+        return "rejected: not a WOLINK tag" if "device error 5" in failure.error else None
 
     report = report_attempt(result, operation="write", facts=facts, cause=cause, attempts=3)
     assert list(report) == [
@@ -342,7 +342,7 @@ def test_only_a_sentence_this_library_wrote_carries_a_key():
         trace=trace,
         exc=exc,
         facts=facts,
-        cause=lambda stage, detail, error, f, exc: "the printer is out of labels",
+        cause=lambda failure: "the printer is out of labels",
     )
     assert own["likely_cause"] == "the printer is out of labels"
     assert "likely_cause_key" not in own
