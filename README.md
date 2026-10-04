@@ -18,12 +18,17 @@ likely means**, ready to publish as sensor attributes so a failed session at
 
 Verified on device over a Bluetooth proxy. The library is tested without
 Home Assistant (`pytest`).
-**Adopting it?** [`docs/adopting.md`](docs/adopting.md) is a whole
-integration end to end: what to write, what the library writes for you,
-every report key, and how to test it without bleak or Home Assistant.
-[`docs/design.md`](docs/design.md) is the *why* — what belongs here, what
-deliberately does not, and how a Bluetooth-proxy route works without
-importing Home Assistant. See [`CHANGELOG.md`](CHANGELOG.md) for releases.
+## Where to start
+
+| you want to | read |
+|---|---|
+| integrate a device | [`docs/adopting.md`](docs/adopting.md): a whole integration end to end, what the library writes for you, how to test it without bleak or Home Assistant |
+| know exactly what a call guarantees | [`docs/contract.md`](docs/contract.md): every public name, error, report key, cause key and callback shape, and the versioning rule |
+| understand why it is shaped this way | [`docs/design.md`](docs/design.md): what belongs here, what deliberately does not, how a Bluetooth-proxy route works without importing Home Assistant |
+| see what changed | [`CHANGELOG.md`](CHANGELOG.md) |
+
+Adopting needs only this repository: the guide and the contract are written
+so you can integrate a device without reading the source.
 
 The design is extracted from integrations that already carry this
 instrumentation (and had drifted apart), and is meant to be adopted by
@@ -44,7 +49,9 @@ Requires Python 3.13+. The core depends only on bleak / bleak-retry-connector;
 | piece | one line |
 |---|---|
 | `ble_session()` | connect inside the block (or reuse a link left up), watch the link, bounded disconnect in `finally` |
-| `Notifications` | queued replies from one characteristic; every wait names its `step` and ends the moment the link drops |
+| `Notifications` | queued replies from one characteristic; every wait names its `step` and ends the moment the link drops; `request()` is write-then-reply |
+| `write_chunks()` / `guarded_write()` | a payload as consecutive writes; every write is bounded and a dropped link ends it as `SessionDropped` |
+| `characteristic_or_raise()` | the service/characteristic lookup with required properties and write size, or `GattMismatch` |
 | `SessionTrace` | nested stage timings; the innermost stage an exception escaped from |
 | stage vocabulary | `unreachable · connect · session · auth · transfer · finish · disconnect`, plus a device `detail` |
 | `run_attempts()` | the lock-per-attempt / fresh-handle-per-attempt contract; policy stays yours |
@@ -54,7 +61,8 @@ Requires Python 3.13+. The core depends only on bleak / bleak-retry-connector;
 | `blesession.testing` | `FakeClient` / `fake_connect()` so every integration's tests fake bleak the same way |
 | `build_report()` | fixed attribute key order; generic likely-cause sentences with a translatable key, your device sentences first |
 | `SessionReports` | the last session and the last failure, so a success does not erase the evidence |
-| errors | `ConnectionError` subclasses so an off device never becomes a traceback |
+| errors | `ConnectionError` subclasses so an off device never becomes a traceback; `retryable` says whether another attempt can help; `DeviceError` is yours to raise for a device-reported fault |
+| `Failure` | what your `cause` callback receives: the stage, the error, the radio facts |
 
 ## What it does not provide
 
@@ -68,6 +76,7 @@ integration learned from its own device and keeps.
 src/blesession/         pure Python + bleak, tested without Home Assistant
 src/blesession/hass.py  imports homeassistant lazily; only used inside HA
 docs/adopting.md        how to use it, with a whole integration
+docs/contract.md        what every name guarantees; versioning and deprecation
 docs/design.md          why it is shaped this way
 ```
 

@@ -18,6 +18,7 @@ from bleak import BleakClient
 from .errors import NotificationTimeout, SessionDropped
 from .session import dropped_event
 from .subscribe import STOP_NOTIFY_TIMEOUT_S, start_notify_with_recovery
+from .transfer import guarded_write
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -173,12 +174,15 @@ class Notifications:
         if self._dropped is not None and self._dropped.is_set():
             raise SessionDropped(f"The link dropped before {step}", detail=step)
         self.clear()
-        write_limit = timeout if write_timeout is None else write_timeout
-        try:
-            async with asyncio.timeout(write_limit):
-                await self._client.write_gatt_char(characteristic, data, response=response)
-        except TimeoutError as exc:
-            raise NotificationTimeout(write_limit, step=step) from exc
+        await guarded_write(
+            self._client,
+            characteristic,
+            data,
+            step=step,
+            response=response,
+            timeout=timeout if write_timeout is None else write_timeout,
+            dropped=self._dropped,
+        )
         if pace_s > 0:
             await asyncio.sleep(pace_s)
         if accept is None:

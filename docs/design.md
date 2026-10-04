@@ -6,7 +6,9 @@ that do not.*
 
 *Adopting the library rather than designing it?*
 [`adopting.md`](adopting.md) *is the guide: a whole integration end to end,
-every report key, and how to test it.*
+every report key, and how to test it.* [`contract.md`](contract.md) *is the
+reference: what every name guarantees, every error, report key and cause key,
+and the versioning rule. This page is the reasoning behind both.*
 
 ## Why
 
@@ -55,7 +57,7 @@ blesession/
   notifications.py  Notifications
   subscribe.py      start_notify_with_recovery(), NOTIFY_ATTEMPTS,
                     STOP_NOTIFY_TIMEOUT_S
-  transfer.py       write_chunks()
+  transfer.py       guarded_write(), write_chunks()
   gatt.py           characteristic_or_raise()
   trace.py          SessionTrace, traced()
   stages.py         the fixed stage vocabulary, primary_of()
@@ -180,7 +182,7 @@ async with Notifications(client, NOTIFY_UUID, settle=0.5) as replies:
   timeout behaviour.
 - `request(uuid, data, timeout=, step=)` is the clear / write / `next` triple
   every command repeats: stale replies are dropped, the write is bounded by
-  `timeout` (a hung write reads as the step timing out; `write_timeout=`
+  `timeout` (a hung write is a `WriteTimeout` naming the step; `write_timeout=`
   gives it its own limit), then the reply is awaited. `accept=` picks the reply out of several, `pace_s=` is the pause
   some tags need between write and wait, and a link already down is
   `SessionDropped`.
@@ -206,8 +208,14 @@ async with Notifications(client, NOTIFY_UUID, settle=0.5) as replies:
 - `write_chunks(client, uuid, data, size, step=)` is the chunk loop for a
   payload larger than one write. The device keeps the chunk size, the gap,
   acknowledged or not, and the framing (`wrap`); the library keeps the
-  slicing and the early `SessionDropped` once the link is gone. It is not a
-  `Notifications` method: it needs no subscription.
+  slicing, the early `SessionDropped` once the link is gone and the bound on
+  each write (`WriteTimeout`). It is not a `Notifications` method: it needs
+  no subscription.
+- **One write primitive.** `request()` and `write_chunks()` both write
+  through `guarded_write()`, so the two ways a protocol writes give the same
+  guarantees: the drop check before the write, the per-write bound, the same
+  errors naming the `step`. Before 0.7 only `request()` bounded its write; a
+  chunk write that hung ran to the attempt bound.
 - Multi-channel protocols open one `Notifications` per characteristic. A
   handle-indexed dispatcher is out of scope.
 
@@ -254,6 +262,7 @@ present are retired in favour of this; a transfer-specific flag becomes
 | level        | what                                          | owner                           |
 |--------------|-----------------------------------------------|---------------------------------|
 | step         | one notification wait                         | protocol code, via `Notifications` |
+| write        | one GATT write: `WRITE_TIMEOUT_S` in `write_chunks()`, the reply `timeout` in `request()` unless `write_timeout=` | `guarded_write()` |
 | attempt      | one try, connecting included                  | `run_attempts()`, value from the integration |
 | disconnect   | the close, with its own bound, inside the attempt bound | `ble_session()` |
 | unsubscribe  | `stop_notify`, with its own bound, inside the attempt bound | `Notifications` (`STOP_NOTIFY_TIMEOUT_S`) |
@@ -368,7 +377,7 @@ report = build_report(
     trace=trace,
     exc=exc,                    # None on success
     facts=radio_facts(...),
-    cause=my_likely_cause,      # (stage, detail, error, facts, exc) -> str | None
+    cause=my_likely_cause,      # (Failure) -> str | None
     noun="device",              # what the generic sentences call the device
 )
 report = report_attempt(attempt, operation="write", facts=..., cause=..., attempts=3)
@@ -458,6 +467,8 @@ integration's own table takes over:
 - a `GattMismatch` in any stage → the device lacks the service,
   characteristic, property or write size the protocol needs
   (`session.gatt_mismatch`)
+- a `WriteTimeout` in any stage → a write never returned: the adapter or
+  proxy stopped taking data (`write_timeout`)
 - a `SessionDropped` in any protocol stage → the link went away mid-session
 - attempt deadline → the BLE stack stopped answering; restart adapter/proxy
 - attempt deadline *during* `disconnect` → the work was done but the result
@@ -485,21 +496,39 @@ not produce a traceback ("this error originated from a custom integration").
 Only a bug should.
 
 ```
-BleSessionError(stage, detail=None)
+BleSessionError(stage, detail=None)     # retryable = True unless a subclass says otherwise
   Unreachable             no handle for the address
   ConnectFailed           establish_connection raised, or the link dropped in settle
   GattMismatch            the device lacks the service / characteristic /
                           property / write size the protocol needs
+                          (retryable = False)
   SessionDropped          the link went away mid-session (carries the step
                           that was waiting), raised by a Notifications wait
   NotificationTimeout     a step wait ran out (carries step)
+    WriteTimeout          a write did not return (a hung proxy, not a silent device)
   AttemptTimedOut         the attempt bound fired
+  DeviceError             raised by the integration: the device answered with an
+                          error (carries `code`, `retryable`); the generic
+                          sentences leave it to the integration's `cause`
 ```
 
 All are `ConnectionError` subclasses so an integration can map them to
-`UpdateFailed` / `HomeAssistantError` in one line. Log-level rule: a failed
-attempt is debug, the final failure is one warning, never an error with a
-traceback.
+`UpdateFailed` / `HomeAssistantError` in one line. `retryable` is the error's
+own statement about whether another attempt can change the outcome;
+`default_retry_if` reads it, so a deterministic failure (the device lacks the
+profile, a rejected key) stops the loop without each integration
+special-casing it. Whether to retry anything else stays the integration's
+policy.
+
+**Why the `cause` callback takes one `Failure`.** It began as positional
+arguments and gained one (`exc`) in 0.6, which broke every callback. A single
+object lets a field be added without breaking anyone; the older shapes are
+accepted with a `DeprecationWarning` until 1.0.
+
+Log-level rule for an integration: a failed attempt is debug, the final
+failure is one warning, never an error with a traceback. (The library itself
+logs failed attempts at debug and leaves the final warning to the
+integration.)
 
 ### 11. Option keys — `const.py`
 
@@ -535,9 +564,10 @@ Around 50–80 lines beyond the protocol itself.
 
 Every integration's tests fake the same four bleak methods with
 `MagicMock`. `FakeClient` is the one fake: `reply(data)` delivers a
-notification (or queues it for the next subscriber), `drop()` takes the
-link down, `fail_*` script errors, `disconnect_delay_s` a hanging
-disconnect. `drop()` also fires the `disconnected_callback`, as bleak does,
+notification (or queues it for the next subscriber), `on_write` answers each
+command, `drop()` takes the link down, `fail_*` script errors,
+`disconnect_delay_s` a hanging disconnect, `write_delay_s` a hanging write,
+and `add_characteristic()` what `characteristic_or_raise()` looks up. `drop()` also fires the `disconnected_callback`, as bleak does,
 so a drop reaches the session the way it does on device.
 `fake_connect(client)` replaces `establish_connection` and wires that
 callback up. The
@@ -568,8 +598,10 @@ fix is in `hass.py` and the stub moves with it.
 ## Direction after 0.1
 
 - **Versioning.** 0.x until a third integration is on it; integrations pin
-  an exact version in `manifest.json`. Anything that changes a report key
-  or a stage name is a minor bump and a CHANGELOG entry, because
+  an exact version in `manifest.json`. The rules (what is contract, what is
+  a helper, what is internal-facing, and the deprecation step before a
+  removal) are in [`contract.md` §1](contract.md); anything that changes a
+  report key or a stage name is a minor bump and a CHANGELOG entry, because
   troubleshooting docs quote them.
 - **Shared troubleshooting doc.** Once two integrations publish the same
   keys, one `docs/troubleshooting.md` here (with a `docs/ko/` copy)
@@ -588,4 +620,6 @@ fix is in `hass.py` and the stub moves with it.
   to adopt this answers both.
 - **Not planned.** Retry policy, pacing, cooldowns, advertisement parsing.
   If the same policy shows up in three integrations, it becomes a
-  documented recipe here before it becomes code.
+  documented recipe here before it becomes code. That rule is what keeps
+  the library a frame and not a framework: a helper is added when three
+  integrations hand-write the same mechanism, not when one does.

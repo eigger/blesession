@@ -6,6 +6,7 @@ from blesession import (
     LinkInfo,
     NotificationTimeout,
     SessionDropped,
+    WriteTimeout,
     cause_key,
     connected_via,
     generic_cause,
@@ -113,6 +114,7 @@ def test_every_key_has_a_sentence_and_every_sentence_a_key():
             ("", SessionDropped("gone")),
             ("", ConnectFailed("x", detail="settle")),
             ("", GattMismatch("no service")),
+            ("", WriteTimeout(5, step="x")),
         )
     }
     assert reachable - {None} == set(CAUSES)
@@ -144,7 +146,7 @@ def test_a_timed_out_attempt_reports_its_own_sentence_and_key():
         operation="op",
         trace=trace,
         exc=exc,
-        cause=lambda stage, detail, error, facts, exc: "the device's reading",
+        cause=lambda failure: "the device's reading",
     )
     assert report["timed_out"] is True
     assert report["likely_cause_key"] == cause_key(stages.CONNECT, str(exc), exc=exc)
@@ -171,9 +173,9 @@ def test_cause_callback_receives_the_error_to_test_its_type():
 
     seen = []
 
-    def cause(stage, detail, error, facts, exc):
-        seen.append(exc)
-        return "silent tag" if isinstance(exc, NotificationTimeout) else None
+    def cause(failure):
+        seen.append(failure.exc)
+        return "silent tag" if isinstance(failure.exc, NotificationTimeout) else None
 
     exc = NotificationTimeout(1, step="start")
     report = build_report(operation="op", trace=SessionTrace(), exc=exc, cause=cause)

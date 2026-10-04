@@ -17,13 +17,26 @@ class BleSessionError(ConnectionError):
 
     stage: str | None = None
     detail: str | None = None
+    retryable: bool = True
+    """Whether another attempt can change the outcome. `default_retry_if`
+    reads it; an error that is deterministic (the device lacks the profile)
+    says False so no integration has to special-case it."""
 
-    def __init__(self, message: str = "", *, stage: str | None = None, detail: str | None = None):
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        stage: str | None = None,
+        detail: str | None = None,
+        retryable: bool | None = None,
+    ):
         super().__init__(message)
         if stage is not None:
             self.stage = stage
         if detail is not None:
             self.detail = detail
+        if retryable is not None:
+            self.retryable = retryable
 
 
 class Unreachable(BleSessionError):
@@ -60,10 +73,39 @@ class GattMismatch(BleSessionError):
 
     A service or characteristic is missing, lacks a property, or the write
     size is too small for the protocol's frames: another model or firmware,
-    not a flaky link.
+    not a flaky link. Not retryable by default, because what a device exposes
+    does not change between attempts; `characteristic_or_raise()` says
+    `retryable=True` for the two cases that can (services not discovered yet,
+    a write size read before the MTU was negotiated).
     """
 
     stage = stages.SESSION
+    retryable = False
+
+
+class DeviceError(BleSessionError):
+    """The device answered, and the answer was an error.
+
+    A device-reported fault (an error frame, a rejected key, a NAK) as
+    opposed to silence or a lost link. `code` is the device's own code, when
+    it has one. The wording and what each code means stay in the integration:
+    raise this (or a subclass) from the protocol code, test its type and
+    `code` in the `cause` callback, and the generic sentences leave it alone.
+    `retryable=False` stops the attempt loop for a fault a retry cannot fix
+    (a rejected key).
+    """
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        code: int | str | None = None,
+        retryable: bool | None = None,
+        stage: str | None = None,
+        detail: str | None = None,
+    ) -> None:
+        super().__init__(message, stage=stage, detail=detail, retryable=retryable)
+        self.code = code
 
 
 class NotificationTimeout(BleSessionError, TimeoutError):
@@ -79,6 +121,23 @@ class NotificationTimeout(BleSessionError, TimeoutError):
         )
         self.step = step
         self.timeout = timeout
+
+
+class WriteTimeout(NotificationTimeout):
+    """A write did not complete in time: the adapter or proxy stopped taking data.
+
+    A `NotificationTimeout` (so `except NotificationTimeout` and
+    `except TimeoutError` keep working, and it carries `step` and `timeout`),
+    but not silence from the device: the write never returned. The reports
+    tell the two apart.
+    """
+
+    def __init__(self, timeout: float, *, step: str) -> None:
+        super().__init__(
+            timeout,
+            step=step,
+            message=f"A write did not complete within {timeout:g}s during {step}",
+        )
 
 
 class AttemptTimedOut(BleSessionError, TimeoutError):

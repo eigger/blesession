@@ -10,6 +10,11 @@ session, and the last one that failed.
 
 from __future__ import annotations
 
+import functools
+import inspect
+import logging
+import os
+import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -19,10 +24,122 @@ from .causes import cause_key, generic_cause
 from .errors import AttemptTimedOut, error_text
 from .trace import SessionTrace
 
-Cause = Callable[[str | None, str | None, str, Mapping[str, Any], BaseException], str | None]
-"""(primary stage, detail, error text, radio facts, the error) -> the device's
-own sentence, or None to fall back to the generic one. Test the error's type
-(`isinstance(exc, NotificationTimeout)`) rather than matching its text."""
+_LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class Failure:
+    """What the `cause` callback is told about a failed session.
+
+    One object rather than a list of arguments, so a field added later does
+    not break every integration's callback.
+
+    `stage` is the primary stage the failure happened in (`stages.AUTH`, ...)
+    and `detail` the device's own stage name when it differs; `exc` is the
+    error itself (test its type: `isinstance(failure.exc, NotificationTimeout)`);
+    `error` its text; `facts` the radio facts (`via`, `rssi`, `paths`, ...).
+    """
+
+    stage: str | None
+    detail: str | None
+    error: str
+    exc: BaseException
+    facts: Mapping[str, Any]
+
+
+Cause = Callable[[Failure], str | None]
+"""The device's own sentence for a failure, or None to fall back to the
+generic one. Take one `Failure`."""
+
+_LEGACY_ARGS = (
+    "(stage, detail, error, facts)",
+    "(stage, detail, error, facts, exc)",
+)
+_WARNED: set[tuple[str, str, int]] = set()
+_PACKAGE_DIR = os.path.dirname(__file__)
+
+
+def _legacy_shape(cause: Callable[..., Any]) -> int | None:
+    """4 or 5 when `cause` is one of the pre-0.7 positional shapes, else None.
+
+    A callback is legacy when it takes 4 or 5 positional arguments (its
+    required ones, or all of them when none is required); a 5th that has a
+    default still gets `exc`. A callback with `*args`, one parameter, or one
+    that cannot be inspected is called with a `Failure`.
+    """
+    try:
+        params = list(inspect.signature(cause).parameters.values())
+    except (TypeError, ValueError):
+        return None
+    if any(p.kind is p.VAR_POSITIONAL for p in params):
+        return None
+    positional = [p for p in params if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+    required = [p for p in positional if p.default is p.empty]
+    count = len(required) or len(positional)
+    if count not in (4, 5):
+        return None
+    return 5 if len(positional) >= 5 else 4
+
+
+def _identity(cause: Callable[..., Any]) -> tuple[str, str, int]:
+    """A key that names the callback's definition, not the object.
+
+    Bound methods are new objects on every access, and the id of a freed one is
+    handed to the next, so identity would both repeat the warning and silence a
+    different callback. The code that defines it is what stays the same.
+    """
+    func = getattr(cause, "__func__", cause)
+    while isinstance(func, functools.partial):  # a partial is its wrapped function
+        func = func.func
+    func = getattr(func, "__func__", func)
+    code = getattr(func, "__code__", None)
+    qualname = getattr(func, "__qualname__", type(func).__qualname__)
+    return (
+        getattr(func, "__module__", None) or "",
+        qualname,
+        code.co_firstlineno if code is not None else 0,
+    )
+
+
+def _call_cause(cause: Callable[..., str | None], failure: Failure) -> str | None:
+    """Call `cause` with a `Failure`, or with the pre-0.7 positional arguments.
+
+    The two older shapes, `(stage, detail, error, facts)` and
+    `(stage, detail, error, facts, exc)`, still work; they raise a
+    `DeprecationWarning` (Python hides it outside tests) and log one warning
+    per callback so it shows in Home Assistant's log too. They go in 1.0.
+    """
+    shape = _legacy_shape(cause)
+    if shape is None:
+        return cause(failure)
+    message = (
+        f"A `cause` callback taking {_LEGACY_ARGS[shape - 4]} is deprecated and "
+        "removed in blesession 1.0; take one blesession.Failure instead"
+    )
+    warnings.warn(message, DeprecationWarning, skip_file_prefixes=(_PACKAGE_DIR,))
+    key = _identity(cause)
+    if key not in _WARNED:
+        _WARNED.add(key)
+        _LOGGER.warning("%s (%r)", message, cause)
+    args = (failure.stage, failure.detail, failure.error, failure.facts)
+    return cause(*args) if shape == 4 else cause(*args, failure.exc)
+
+
+REPORT_KEYS: tuple[str, ...] = (
+    "operation",
+    "success",
+    "skipped",
+    "error",
+    "failed_stage",
+    "failed_detail",
+    "likely_cause",
+    "likely_cause_key",
+    "timed_out",
+    "attempt",
+    "attempts",
+)
+"""The report's own keys, in order. After them: `FACT_KEYS`, any other key in
+`facts=`, one `<stage>_s` per timed stage, then the trace's `note()` facts."""
 
 FACT_KEYS: tuple[str, ...] = (
     "via",
@@ -104,7 +221,7 @@ def build_report(
         if isinstance(exc, AttemptTimedOut):
             likely, likely_key = generic_cause(stage, error, facts, exc=exc, noun=noun), generic_key
         if likely is None and cause is not None:
-            likely = cause(stage, detail, error, facts, exc)
+            likely = _call_cause(cause, Failure(stage, detail, error, exc, facts))
         if likely is None:
             likely, likely_key = generic_cause(stage, error, facts, exc=exc, noun=noun), generic_key
         if likely is not None:

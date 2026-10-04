@@ -1,7 +1,10 @@
 # Adopting blesession in an integration
 
 What the library gives you, what stays yours, and one whole integration
-using it. [`design.md`](design.md) is the *why*; this is the *how*.
+using it. This is the *how*; [`contract.md`](contract.md) is the reference
+(what every name guarantees, every error, report key and cause key), and
+[`design.md`](design.md) is the *why*. Read this page, then keep the contract
+open while you write.
 
 ## The split, in one table
 
@@ -18,13 +21,15 @@ retry.
 
 ```json
 {
-  "requirements": ["blesession==0.6.0"]
+  "requirements": ["blesession==0.7.0"]
 }
 ```
 
-Pin exactly, in `manifest.json`. Report keys and stage names are a contract
-that troubleshooting docs quote, and until 1.0 a minor bump may change one
-(each is listed in [`CHANGELOG.md`](../CHANGELOG.md)).
+Pin exactly, in `manifest.json`. Report keys, stage names and cause keys are
+a contract that troubleshooting docs quote, and until 1.0 a minor bump may
+change one; a shape that was released is removed only after a release that
+still accepts it with a `DeprecationWarning` ([`contract.md` §1](contract.md)).
+Each change is listed in [`CHANGELOG.md`](../CHANGELOG.md).
 
 `blesession` depends only on `bleak` and `bleak-retry-connector`, both of
 which Home Assistant already ships. `blesession.hass` imports
@@ -42,7 +47,8 @@ coordinator and the entities are unchanged by adopting the library.
 import asyncio
 
 from blesession import (
-    BleSessionError,
+    DeviceError,
+    Failure,
     Notifications,
     SessionReports,
     ble_session,
@@ -70,16 +76,21 @@ def _complete(frame: bytes) -> bool:
 STAGE_MAP = {"unlock": stages.AUTH, "readout": stages.TRANSFER}
 
 
-class UnlockRejected(BleSessionError):
+class UnlockRejected(DeviceError):
     """The tag refused the key. A ConnectionError, so it is an expected
-    failure rather than a traceback."""
+    failure rather than a traceback; a retry would be refused again, so it
+    says so and `run_attempts` stops at the first one."""
 
     stage = stages.AUTH
+    retryable = False
 
 
-def likely_cause(stage, detail, error, facts, exc):
-    """What only this device can say. None -> the generic sentence."""
-    if isinstance(exc, UnlockRejected):
+def likely_cause(failure: Failure) -> str | None:
+    """What only this device can say. None -> the generic sentence.
+
+    Test the error's type, not its text: `failure.exc` is the exception.
+    """
+    if isinstance(failure.exc, UnlockRejected):
         return "The tag rejected the key: it is paired to another hub, or is a different model."
     return None
 
@@ -134,10 +145,15 @@ class AcmeTag:
         async with ble_session(device, trace=trace, name="acme tag") as client:
             async with Notifications(client, NOTIFY_UUID, settle=0.5) as replies:
                 with trace.timed("unlock"):
-                    await client.write_gatt_char(WRITE_UUID, b"\x01" + KEY, response=False)
-                    reply = await replies.next(timeout=5, step="unlock")
+                    # Drops stale replies, writes (bounded, and a link already
+                    # down is SessionDropped), then waits for the answer.
+                    reply = await replies.request(
+                        WRITE_UUID, b"\x01" + KEY, timeout=5, step="unlock"
+                    )
                     if reply[0] != 0x00:
-                        raise UnlockRejected(f"the tag rejected the key (0x{reply[0]:02x})")
+                        raise UnlockRejected(
+                            f"the tag rejected the key (0x{reply[0]:02x})", code=reply[0]
+                        )
 
                 with trace.timed("readout"):
                     payload = await replies.wait_for(_complete, timeout=30, step="readout")
@@ -188,6 +204,29 @@ back and decide.
 
 **`report_attempt()`** assembles the attributes in a fixed key order, so
 the same key means the same thing on every integration adopting this.
+
+## Replacing what you wrote by hand
+
+Most integrations arrive with the same hand-written pieces. Each has one
+call here, and the contract says exactly what it guarantees:
+
+| you wrote | use | what you get that the hand-written one lacked |
+|---|---|---|
+| `establish_connection` + `try/finally: disconnect` | `ble_session()` | the close is bounded and never masks your error; the link is watched; a failed connect is an attempt |
+| an `Event` or `Future` per reply | `Notifications.next` / `wait_for` | a reply that lands between two waits is kept; a wait ends the moment the link drops |
+| clear the reply, write, wait | `Notifications.request()` | one call; stale replies cannot answer this request; the write is bounded |
+| a loop slicing a payload into writes | `write_chunks()` | each write is bounded and a dropped link ends it as `SessionDropped`; `on_chunk` keeps the progress for the trace |
+| `get_service` / `get_characteristic` checks | `characteristic_or_raise()` | one error, `GattMismatch`, with its own failure sentence and no retry |
+| `except` + `"timeout" in str(err)` to pick a message | `isinstance(failure.exc, ...)` in `cause` | survives a reworded message |
+| a retry loop with a lock held throughout | `run_attempts()` | the lock is held for one attempt; every attempt is bounded |
+| `if device is None` | `ble_device_or_raise()` | "asleep" arrives as `Unreachable`, with a stage and a cause |
+| a failure counter and a last-failure timestamp | `SessionReports` + `report_attempt()` | the reading a user needs at 3 am, the same keys on every integration |
+| `MagicMock` for the client | `FakeClient` | a notification, a drop, a hung write or a missing characteristic in one line |
+
+What you keep: how many retries, how long a bound, the lock and its scope,
+pacing, bonding, and the frames. Your device's own errors derive from
+`DeviceError` (or `BleSessionError`); raise them with `retryable=False` when a
+retry cannot help.
 
 ## The report
 
@@ -258,6 +297,49 @@ which you rebuild from `rssi`, `via` and `paths` — already in the report —
 rather than translating that fragment. A sentence from *your* `cause`
 callback carries no key, because you already own its wording.
 
+## A protocol with a payload
+
+A device that takes a large payload (an image, a firmware block) looks up its
+characteristic once the link has settled, sizes its chunks from what the link
+allows, and writes them with `write_chunks()`:
+
+```python
+from blesession import characteristic_or_raise, write_chunks
+
+HEADER = 4  # this protocol prefixes each chunk with its 4-byte offset
+
+async with ble_session(device, trace=trace, settle_s=0.5) as client:
+    char = characteristic_or_raise(
+        client,
+        SERVICE_UUID,
+        WRITE_UUID,
+        properties=("write-without-response",),
+        min_write_size=HEADER + 16,                  # room for the header and some data
+        label="ACME",
+    )
+    # `size` is the data in a chunk; `wrap` adds the header, so the write is
+    # `size + HEADER` and must still fit what the link allows.
+    size = min(MAX_CHUNK, char.max_write_without_response_size - HEADER)
+    with trace.timed("transfer"):
+        await write_chunks(
+            client, char, payload, size,
+            step="upload",
+            gap_s=pacing_s,                          # yours: pacing is policy
+            wrap=lambda offset, chunk: offset.to_bytes(HEADER, "little") + chunk,
+            on_chunk=lambda sent: trace.note(sends=sent),
+        )
+```
+
+`settle_s` comes first because the write size is bleak's 20-byte default
+until the MTU is known. A device without the characteristic ends the attempt
+as `GattMismatch` with its own failure sentence, and is not retried; each
+write is bounded (`WriteTimeout`) and a dropped link ends the transfer as
+`SessionDropped`.
+
+If your `cause` callback has a sentence for a silent device, test for
+`WriteTimeout` first (it is a `NotificationTimeout`), or the hung write gets
+your sentence instead of the generic `write_timeout` one.
+
 ## Keeping the link across sessions
 
 For a device with a `keep_connection` option:
@@ -279,30 +361,51 @@ and the trace notes `reused=True`.
 behave the same way:
 
 ```python
+import pytest
 from blesession import session as session_mod
 from blesession.testing import FakeClient, FakeDevice, fake_connect
+from homeassistant.exceptions import HomeAssistantError
+
+import acme_tag.tag as tag_module
 
 
-async def test_a_rejected_key_names_the_auth_stage(monkeypatch):
+async def test_a_rejected_key_names_the_auth_stage_and_is_not_retried(monkeypatch):
     client = FakeClient()
+    # The connection, and the two things only Home Assistant can supply: the
+    # device handle and the radio facts. Patch them where the integration
+    # imported them, so the test needs neither Bluetooth nor a running hass.
     monkeypatch.setattr(session_mod, "establish_connection", fake_connect(client))
-    client.reply(b"\x05")                    # the tag refuses
+    monkeypatch.setattr(tag_module, "ble_device_or_raise", lambda hass, address: FakeDevice(address))
+    monkeypatch.setattr(tag_module, "radio_facts", lambda hass, address, link: {})
+    # The tag answers the unlock command by refusing the key. (A reply queued
+    # before the command would be dropped: `request()` discards stale replies.)
+    client.on_write = lambda char, data: client.reply(b"\x05")
 
-    tag = AcmeTag(hass, "AA:BB:CC:DD:EE:FF", retries=1)
+    tag = tag_module.AcmeTag(None, "AA:BB:CC:DD:EE:FF", retries=3)
     with pytest.raises(HomeAssistantError):
         await tag.read()
 
+    assert len(client.writes) == 1  # a rejected key is final: one attempt, not three
     report = tag.reports.last_failure
     assert report["failed_stage"] == "auth"
     assert report["failed_detail"] == "unlock"
     assert "paired to another hub" in report["likely_cause"]
 ```
 
+The session itself needs no Home Assistant; only `ble_device_or_raise` and
+`radio_facts` do, which is why they are the two names patched. Importing
+`homeassistant` at the top of your module is fine in a test run inside Home
+Assistant's own test harness; elsewhere, stub the two names you import from it.
+
 `client.reply(data)` delivers a notification (or queues it for the next
-subscriber), `client.drop()` takes the link down and fires the disconnect
+subscriber), `client.on_write` answers each command written, `client.drop()` takes the link down and fires the disconnect
 callback as bleak does, `client.fail_write` / `fail_start_notify` /
-`fail_disconnect` script errors, and `disconnect_delay_s` hangs a close.
-You can retire your own `MagicMock` client.
+`fail_disconnect` script errors, `disconnect_delay_s` hangs a close and
+`write_delay_s` a write (set it large to see `WriteTimeout`).
+`client.add_characteristic(service_uuid, char_uuid, properties=...,
+max_write_without_response_size=...)` exposes what `characteristic_or_raise()`
+looks up; leave it out to see `GattMismatch`. You can retire your own
+`MagicMock` client.
 
 For `blesession.hass`, plant a stub module in `sys.modules` — every
 function there imports `homeassistant` inside the call. `tests/test_hass.py`
@@ -319,11 +422,16 @@ in this repo is a working example.
 4. Move the retry loop to `run_attempts()`, keeping *your* counts, bounds
    and pause. Resolve the handle with `ble_device_or_raise()` inside the
    attempt.
-5. Derive your device errors from `BleSessionError` so one `except
-   ConnectionError` maps them all.
+5. Derive your device errors from `DeviceError` (or `BleSessionError`) so one
+   `except ConnectionError` maps them all; set `retryable=False` on the ones a
+   retry cannot fix.
 6. Record every attempt into `SessionReports` from `on_attempt`, and
    publish `last` and `last_failure`.
-7. Write the device sentences you have — an empty `cause` callback is fine
-   to start with.
+7. Write the device sentences you have as a `cause(failure)` callback — an
+   empty one is fine to start with — testing `failure.exc`'s type.
+8. Look up characteristics with `characteristic_or_raise()` and write payloads
+   with `write_chunks()`.
+9. Test with `FakeClient`; the full list of what is promised is in
+   [`contract.md`](contract.md).
 
 Around 50–80 lines beyond the protocol itself.
