@@ -64,7 +64,7 @@ class FakeClient:
     def __init__(self, *, address: str = "AA:BB:CC:DD:EE:FF", connected: bool = True) -> None:
         self.address = address
         self.is_connected = connected
-        self.writes: list[tuple[Any, bytes, bool]] = []
+        self.writes: list[tuple[Any, bytes, bool | None]] = []
         self.subscribed: dict[Any, Callable[[Any, bytearray], None]] = {}
         self.disconnects = 0
         self.fail_start_notify: BaseException | None = None
@@ -99,7 +99,7 @@ class FakeClient:
         self.subscribed.pop(characteristic, None)
 
     async def write_gatt_char(
-        self, characteristic: Any, data: bytes, response: bool = False
+        self, characteristic: Any, data: bytes, response: bool | None = False
     ) -> None:
         if self.write_delay_s:
             await asyncio.sleep(self.write_delay_s)

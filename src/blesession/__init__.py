@@ -41,11 +41,16 @@ from .report import (
     report_attempt,
 )
 from .session import DISCONNECT_TIMEOUT_S, ble_session, dropped_event, still_up
-from .subscribe import NOTIFY_ATTEMPTS, STOP_NOTIFY_TIMEOUT_S, start_notify_with_recovery
+from .subscribe import (
+    NOTIFY_ATTEMPTS,
+    STOP_NOTIFY_TIMEOUT_S,
+    start_notify_with_recovery,
+    stop_notify_best_effort,
+)
 from .trace import SessionTrace, traced
 from .transfer import WRITE_TIMEOUT_S, guarded_write, write_chunks
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 """The one place the version is written; pyproject.toml reads it."""
 
 __all__ = [
@@ -89,6 +94,7 @@ __all__ = [
     "run_attempts",
     "stages",
     "start_notify_with_recovery",
+    "stop_notify_best_effort",
     "still_up",
     "traced",
     "write_chunks",

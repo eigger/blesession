@@ -55,8 +55,8 @@ blesession/
   session.py        ble_session(), current_client_class(), dropped_event()
                     still_up()
   notifications.py  Notifications
-  subscribe.py      start_notify_with_recovery(), NOTIFY_ATTEMPTS,
-                    STOP_NOTIFY_TIMEOUT_S
+  subscribe.py      start_notify_with_recovery(), stop_notify_best_effort(),
+                    NOTIFY_ATTEMPTS, STOP_NOTIFY_TIMEOUT_S
   transfer.py       guarded_write(), write_chunks()
   gatt.py           characteristic_or_raise()
   trace.py          SessionTrace, traced()
@@ -204,7 +204,10 @@ async with Notifications(client, NOTIFY_UUID, settle=0.5) as replies:
   the notification subscription is cleaned up before the error propagates.
 - `__aexit__` unsubscribes and ignores a failure on a dropped link, under
   its own `STOP_NOTIFY_TIMEOUT_S` bound — it runs in the attempt's scope, and after an attempt
-  bound has fired it has nothing but this one (§5).
+  bound has fired it has nothing but this one (§5). It does so through
+  `stop_notify_best_effort()`, which is public for the subscription an
+  integration makes itself (a handoff between stages, a pairing exchange):
+  the same cleanup rule, not a second one.
 - `write_chunks(client, uuid, data, size, step=)` is the chunk loop for a
   payload larger than one write. The device keeps the chunk size, the gap,
   acknowledged or not, and the framing (`wrap`); the library keeps the

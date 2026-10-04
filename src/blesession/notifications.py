@@ -17,7 +17,7 @@ from bleak import BleakClient
 
 from .errors import NotificationTimeout, SessionDropped
 from .session import dropped_event
-from .subscribe import STOP_NOTIFY_TIMEOUT_S, start_notify_with_recovery
+from .subscribe import start_notify_with_recovery, stop_notify_best_effort
 from .transfer import guarded_write
 
 _LOGGER = logging.getLogger(__name__)
@@ -84,12 +84,7 @@ class Notifications:
         await self._stop_notify()
 
     async def _stop_notify(self) -> None:
-        try:
-            if self._client.is_connected:
-                async with asyncio.timeout(STOP_NOTIFY_TIMEOUT_S):
-                    await self._client.stop_notify(self._characteristic)
-        except Exception as exc:  # noqa: BLE001 - never mask the session's error
-            _LOGGER.debug("stop_notify on %s failed (ignored): %s", self._characteristic, exc)
+        await stop_notify_best_effort(self._client, self._characteristic)
 
     def _on_notify(self, _sender: Any, data: bytearray) -> None:
         self._queue.put_nowait(bytes(data))
@@ -152,7 +147,7 @@ class Notifications:
         timeout: float,
         step: str,
         write_timeout: float | None = None,
-        response: bool = False,
+        response: bool | None = False,
         accept: Callable[[bytes], bool] | None = None,
         pace_s: float = 0.0,
     ) -> bytes:

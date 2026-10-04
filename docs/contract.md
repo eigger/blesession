@@ -38,6 +38,7 @@ behaviour is.
 | `WRITE_TIMEOUT_S` | Helper | the default bound on one write (10 s) |
 | `characteristic_or_raise` | Helper | the service/characteristic lookup, with required properties and write size (§3.4) |
 | `start_notify_with_recovery` | Helper | subscribe, releasing a subscription the last link left behind |
+| `stop_notify_best_effort` | Helper | unsubscribe in cleanup: skipped on a dead link, bounded, never raises |
 | `NOTIFY_ATTEMPTS`, `STOP_NOTIFY_TIMEOUT_S`, `DISCONNECT_TIMEOUT_S` | Helper | the bounds those helpers use |
 | `run_attempts` | Helper | the lock-per-attempt loop (§3.5) |
 | `Attempt` | Contract | one try: `number`, `trace`, `state`, `result`, `error`, `skipped`, `timed_out`, `ok`, `failed_stage`, `failed_detail` |
@@ -105,7 +106,9 @@ One primitive, so every write path behaves the same:
   The attempt bound (§3.5) is a separate, longer limit above it.
 
 `guarded_write(client, characteristic, data, *, step, response=False, timeout=WRITE_TIMEOUT_S, dropped=None, phase="before")`
-is the one write; `dropped` defaults to the event `ble_session()` registered, and
+is the one write; `response=None` leaves the write type to the backend (bleak picks
+from the characteristic's properties), as bleak's own `write_gatt_char` does when called without `response`;
+`dropped` defaults to the event `ble_session()` registered, and
 `phase` ("before" or "during") only words the `SessionDropped` message. A
 `TimeoutError` the backend's write raises itself is not renamed: only the
 library's own bound becomes `WriteTimeout`, and a write that hung because the
