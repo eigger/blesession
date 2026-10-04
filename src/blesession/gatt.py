@@ -43,10 +43,10 @@ def characteristic_or_raise(
 
     `min_write_size` reads bleak's `max_write_without_response_size`, which
     stays at the 20-byte default until the MTU is known (always, on BlueZ
-    before 5.62). Check it once the link has settled, and treat a too-small
-    size as "this link cannot carry the frames" as much as "wrong model".
-    The error is deterministic, but `default_retry_if` still retries it;
-    pass your own `retry_if` to stop at the first one.
+    before 5.62). Check it once the link has settled. A missing service,
+    characteristic or property is final (`GattMismatch.retryable` is False, so
+    `default_retry_if` stops); a too-small write size and a failed lookup can be
+    transient, so those are raised `retryable=True`.
     """
     if isinstance(properties, str):
         properties = (properties,)
@@ -56,7 +56,7 @@ def characteristic_or_raise(
             raise GattMismatch(f"{label} service {service_uuid} is missing")
         char = service.get_characteristic(char_uuid)
     except BleakError as exc:
-        raise GattMismatch(f"{label} GATT lookup failed: {exc}") from exc
+        raise GattMismatch(f"{label} GATT lookup failed: {exc}", retryable=True) from exc
     if char is None:
         raise GattMismatch(f"{label} characteristic {char_uuid} is missing")
     missing = [prop for prop in properties if prop not in char.properties]
@@ -70,6 +70,7 @@ def characteristic_or_raise(
         if size < min_write_size:
             raise GattMismatch(
                 f"{label} write size {size} is too small for the protocol's "
-                f"{min_write_size}-byte frames"
+                f"{min_write_size}-byte frames",
+                retryable=True,
             )
     return char

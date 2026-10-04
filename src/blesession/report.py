@@ -11,6 +11,8 @@ session, and the last one that failed.
 from __future__ import annotations
 
 import inspect
+import logging
+import os
 import warnings
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -20,6 +22,8 @@ from .attempts import Attempt
 from .causes import cause_key, generic_cause
 from .errors import AttemptTimedOut, error_text
 from .trace import SessionTrace
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -50,33 +54,70 @@ _LEGACY_ARGS = (
     "(stage, detail, error, facts)",
     "(stage, detail, error, facts, exc)",
 )
+_WARNED: set[int] = set()
+_PACKAGE_DIR = os.path.dirname(__file__)
+
+
+def _legacy_shape(cause: Callable[..., Any]) -> int | None:
+    """4 or 5 when `cause` is one of the pre-0.7 positional shapes, else None.
+
+    A callback is legacy when it takes 4 or 5 positional arguments (its
+    required ones, or all of them when none is required); a 5th that has a
+    default still gets `exc`. A callback with `*args`, one parameter, or one
+    that cannot be inspected is called with a `Failure`.
+    """
+    try:
+        params = list(inspect.signature(cause).parameters.values())
+    except (TypeError, ValueError):
+        return None
+    if any(p.kind is p.VAR_POSITIONAL for p in params):
+        return None
+    positional = [p for p in params if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+    required = [p for p in positional if p.default is p.empty]
+    count = len(required) or len(positional)
+    if count not in (4, 5):
+        return None
+    return 5 if len(positional) >= 5 else 4
 
 
 def _call_cause(cause: Callable[..., str | None], failure: Failure) -> str | None:
     """Call `cause` with a `Failure`, or with the pre-0.7 positional arguments.
 
     The two older shapes, `(stage, detail, error, facts)` and
-    `(stage, detail, error, facts, exc)`, still work and raise a
-    `DeprecationWarning`; they go in 1.0.
+    `(stage, detail, error, facts, exc)`, still work; they raise a
+    `DeprecationWarning` (Python hides it outside tests) and log one warning
+    per callback so it shows in Home Assistant's log too. They go in 1.0.
     """
-    try:
-        params = list(inspect.signature(cause).parameters.values())
-    except (TypeError, ValueError):
+    shape = _legacy_shape(cause)
+    if shape is None:
         return cause(failure)
-    if not any(p.kind is p.VAR_POSITIONAL for p in params):
-        positional = [p for p in params if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
-        count = len([p for p in positional if p.default is p.empty]) or len(positional)
-        if count in (4, 5):
-            warnings.warn(
-                f"A `cause` callback taking {_LEGACY_ARGS[count - 4]} is deprecated; "
-                "take one blesession.Failure instead",
-                DeprecationWarning,
-                stacklevel=4,
-            )
-            args = (failure.stage, failure.detail, failure.error, failure.facts)
-            return cause(*args) if count == 4 else cause(*args, failure.exc)
-    return cause(failure)
+    message = (
+        f"A `cause` callback taking {_LEGACY_ARGS[shape - 4]} is deprecated and "
+        "removed in blesession 1.0; take one blesession.Failure instead"
+    )
+    warnings.warn(message, DeprecationWarning, skip_file_prefixes=(_PACKAGE_DIR,))
+    if id(cause) not in _WARNED:
+        _WARNED.add(id(cause))
+        _LOGGER.warning("%s (%r)", message, cause)
+    args = (failure.stage, failure.detail, failure.error, failure.facts)
+    return cause(*args) if shape == 4 else cause(*args, failure.exc)
 
+
+REPORT_KEYS: tuple[str, ...] = (
+    "operation",
+    "success",
+    "skipped",
+    "error",
+    "failed_stage",
+    "failed_detail",
+    "likely_cause",
+    "likely_cause_key",
+    "timed_out",
+    "attempt",
+    "attempts",
+)
+"""The report's own keys, in order. After them: `FACT_KEYS`, any other key in
+`facts=`, one `<stage>_s` per timed stage, then the trace's `note()` facts."""
 
 FACT_KEYS: tuple[str, ...] = (
     "via",

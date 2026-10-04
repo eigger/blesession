@@ -22,12 +22,21 @@ class BleSessionError(ConnectionError):
     reads it; an error that is deterministic (the device lacks the profile)
     says False so no integration has to special-case it."""
 
-    def __init__(self, message: str = "", *, stage: str | None = None, detail: str | None = None):
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        stage: str | None = None,
+        detail: str | None = None,
+        retryable: bool | None = None,
+    ):
         super().__init__(message)
         if stage is not None:
             self.stage = stage
         if detail is not None:
             self.detail = detail
+        if retryable is not None:
+            self.retryable = retryable
 
 
 class Unreachable(BleSessionError):
@@ -64,7 +73,10 @@ class GattMismatch(BleSessionError):
 
     A service or characteristic is missing, lacks a property, or the write
     size is too small for the protocol's frames: another model or firmware,
-    not a flaky link.
+    not a flaky link. Not retryable by default, because what a device exposes
+    does not change between attempts; `characteristic_or_raise()` says
+    `retryable=True` for the two cases that can (services not discovered yet,
+    a write size read before the MTU was negotiated).
     """
 
     stage = stages.SESSION
@@ -92,10 +104,8 @@ class DeviceError(BleSessionError):
         stage: str | None = None,
         detail: str | None = None,
     ) -> None:
-        super().__init__(message, stage=stage, detail=detail)
+        super().__init__(message, stage=stage, detail=detail, retryable=retryable)
         self.code = code
-        if retryable is not None:
-            self.retryable = retryable
 
 
 class NotificationTimeout(BleSessionError, TimeoutError):

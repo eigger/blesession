@@ -47,7 +47,7 @@ behaviour is.
 | `stages` | Contract | the primary stage names (§4) |
 | `build_report`, `report_attempt` | Contract | the attribute dict (§6) |
 | `SessionReports` | Helper | the `last` / `last_failure` slots |
-| `FACT_KEYS` | Contract | the radio keys, in report order |
+| `REPORT_KEYS`, `FACT_KEYS` | Contract | the report's own keys, and the radio keys, in report order (§6) |
 | `Failure`, `Cause` | Contract | what a `cause` callback receives and returns (§7) |
 | `CAUSES`, `cause_key`, `generic_cause`, `placement` | Contract | the generic sentences, their keys, the weak-signal advice (§8) |
 | `BleSessionError`, `Unreachable`, `ConnectFailed`, `GattMismatch`, `SessionDropped`, `NotificationTimeout`, `WriteTimeout`, `AttemptTimedOut`, `DeviceError` | Contract | the errors (§5) |
@@ -56,8 +56,9 @@ behaviour is.
 | `dropped_event`, `still_up` | Helper | the drop event `ble_session()` registered for a client; whether a kept link can carry another session |
 
 `blesession.hass` (`ble_device_or_raise`, `radio_facts`) and
-`blesession.testing` (`FakeClient`, `FakeDevice`, `fake_connect`) are Helper
-tier. Importing `blesession` never imports Home Assistant; `hass` does, inside
+`blesession.testing` (`FakeClient`, `FakeDevice`, `fake_connect`, and the
+`FakeCharacteristic`, `FakeService` and `FakeServices` a `FakeClient` exposes)
+are Helper tier. Importing `blesession` never imports Home Assistant; `hass` does, inside
 each call.
 
 ## 3. What each piece guarantees
@@ -65,8 +66,9 @@ each call.
 ### 3.1 `ble_session(device, ...)`
 
 - Connecting happens *inside* the block: a connect failure raises out of it
-  as `ConnectFailed` (or `Unreachable` for a missing handle) and counts as an
-  attempt.
+  as `ConnectFailed` and counts as an attempt. (`Unreachable`, for a device no
+  radio has a handle for, comes from `blesession.hass.ble_device_or_raise()`,
+  which you call inside the attempt, before `ble_session`.)
 - The block runs in the trace's `session` stage; an integration's own stages
   nest in it, and a failure before any of them is attributed to `session`.
 - The link is watched for the whole block (`dropped_event(client)`); a drop
@@ -82,7 +84,7 @@ each call.
 - Every wait names its `step`. A timeout is `NotificationTimeout(step=...)`.
 - A wait ends as `SessionDropped` the moment the link goes, not when its
   timeout runs out; what is already queued is delivered first.
-- `request(characteristic, data, *, timeout, step, write_timeout=None, accept=, pace_s=)`
+- `request(characteristic, data, *, timeout, step, write_timeout=None, response=False, accept=None, pace_s=0.0)`
   drops stale replies, writes (through `guarded_write`), pauses `pace_s`, and
   returns the reply. `timeout` bounds the write and, separately, the reply;
   `write_timeout` gives the write its own limit.
@@ -102,6 +104,13 @@ One primitive, so every write path behaves the same:
   `step`. The default bound is `WRITE_TIMEOUT_S` (10 s); `None` removes it.
   The attempt bound (§3.5) is a separate, longer limit above it.
 
+`guarded_write(client, characteristic, data, *, step, response=False, timeout=WRITE_TIMEOUT_S, dropped=None, phase="before")`
+is the one write; `dropped` defaults to the event `ble_session()` registered, and
+`phase` ("before" or "during") only words the `SessionDropped` message. A
+`TimeoutError` the backend's write raises itself is not renamed: only the
+library's own bound becomes `WriteTimeout`, and a write that hung because the
+link dropped is `SessionDropped`, not `WriteTimeout`.
+
 `write_chunks(client, characteristic, data, size, *, step, response=False, gap_s=0, wrap=None, on_chunk=None, write_timeout=WRITE_TIMEOUT_S)`
 returns the number of writes made. `wrap(offset, chunk)` frames a chunk,
 `on_chunk(sent)` runs after each write so a trace keeps the progress of a
@@ -109,18 +118,22 @@ transfer that later fails. An empty `data` writes nothing.
 
 ### 3.4 `characteristic_or_raise(client, service_uuid, char_uuid, *, properties=(), min_write_size=None, label="device")`
 
-Returns the characteristic or raises `GattMismatch` (stage `session`, not
-retryable): the service or characteristic is missing, a required property is
-absent, the write size is too small, or the lookup itself failed. A write size
-read right after connecting can be bleak's 20-byte default until the MTU is
-known; check it once the link has settled.
+Returns the characteristic or raises `GattMismatch` (stage `session`): the
+service or characteristic is missing, a required property is absent, the write
+size is too small, or the lookup itself failed. The first three are final
+(`retryable=False`: the device will not grow the profile); a too-small write
+size and a failed lookup are raised `retryable=True`, because a write size read
+right after connecting can be bleak's 20-byte default until the MTU is known
+and services may not be discovered yet. Check the size once the link has
+settled.
 
 ### 3.5 `run_attempts(attempt_fn, *, lock, max_attempts, attempt_timeout_s, pause_s, retry_if, guard, on_attempt, stage_map, name)`
 
 - The lock is held for **one attempt**; between attempts it is released.
-- Every attempt is bounded, connecting included. A bound that fires is
-  `AttemptTimedOut` and `timed_out=True`; it is not retried by default (the
-  transport is dead, not the device unwilling).
+- Every attempt is bounded, connecting included, **when you pass
+  `attempt_timeout_s`** (the default `None` is no bound: always pass one). A
+  bound that fires is `AttemptTimedOut` and `timed_out=True`; it is not
+  retried by default (the transport is dead, not the device unwilling).
 - `guard` runs under the lock before the attempt and may decline it
   (`skipped`); `on_attempt` sees every attempt, including declined ones.
 - It never raises for a failed attempt: the returned `Attempt` carries the
@@ -146,28 +159,41 @@ with `SessionTrace(stage_map=...)`; the report carries both.
 | `finish` | the completion wait after the last data frame |
 | `disconnect` | only the close failed; the work was done |
 
-`SessionTrace`: `timed(name)` (nests; a repeated stage adds up), `fail(name)`,
-`forgive(name)`, `note(**facts)` (scalars only), `failure(exc)` → `(stage,
-detail)`, `as_dict()`. The **innermost** stage an exception escapes from, and
-the first failure, win.
+`SessionTrace(stage_map=None)`: `timed(name)` (nests; a repeated stage adds
+up), `record(name, seconds)`, `fail(name)`, `forgive(name=None)`,
+`note(**facts)` (scalars only), `failure(exc)` → `(stage, detail)`,
+`as_dict()`; read `stage` (the stage running now), `failed_primary`,
+`failed_detail`, `timings`, `facts`, and `link` (what `ble_session()` learnt
+about the radio). The **innermost** stage an exception escapes from, and the
+first failure, win.
 
 ## 5. Errors
 
 Every library error is a `ConnectionError`, so one `except ConnectionError`
-maps them all to `UpdateFailed` / `HomeAssistantError`. A failed attempt is
-logged at debug, the final failure once at warning, never with a traceback.
+maps them all to `UpdateFailed` / `HomeAssistantError`. The library logs each
+failed attempt at debug (with the traceback, for a bug hunt) and nothing at
+warning; what the *final* failure is logged as is yours. The convention that
+reads well in Home Assistant: one warning, no traceback, because an off device
+is the ordinary case.
+
+`WriteTimeout` is a `NotificationTimeout`. A `cause` callback that tests
+`isinstance(failure.exc, NotificationTimeout)` therefore also matches it; test
+for `WriteTimeout` first, or exclude it, when your sentence is about a silent
+device and you want the generic `write_timeout` reading for a hung write.
 
 | class | raised when | `stage` | `retryable` | also carries |
 |---|---|---|---|---|
 | `BleSessionError` | base class | per subclass | `True` | `stage`, `detail`, `retryable` |
 | `Unreachable` | no radio has a handle for the address | `unreachable` | `True` | |
 | `ConnectFailed` | `establish_connection` raised, or the link dropped in the settle | `connect` | `True` | `detail="settle"` for a settle drop |
-| `GattMismatch` | the device lacks the service, characteristic, property or write size | `session` | **`False`** | |
+| `GattMismatch` | the device lacks the service, characteristic, property or write size | `session` | **`False`**, `True` for a too-small write size or a failed lookup (§3.4) | |
 | `SessionDropped` | the link went away mid-session | `session` | `True` | `detail` = the step that was waiting |
 | `NotificationTimeout` | a wait ran out | | `True` | `step`, `timeout`; also a `TimeoutError` |
 | `WriteTimeout` | a write did not return in time | | `True` | `step`, `timeout`; a `NotificationTimeout` |
-| `AttemptTimedOut` | the attempt bound fired | the stage that was running | `True` | `timeout`; also a `TimeoutError` |
+| `AttemptTimedOut` | the attempt bound fired | the stage that was running | `True`\* | `timeout`; also a `TimeoutError` |
 | `DeviceError` | **you raise it**: the device answered with an error | from the trace | as you set it | `code`, `retryable` |
+
+\* never retried by default: `default_retry_if` stops at `timed_out` first.
 
 `retryable` is read by `default_retry_if`. Raise `DeviceError(..., code=...,
 retryable=False)` (or a subclass) for a fault a retry cannot fix, such as a
@@ -179,9 +205,11 @@ code), `run_attempts` still records it with the stage from the trace.
 
 ## 6. The report
 
-`build_report(operation=, trace=, exc=, skipped=, facts=, cause=, noun=, attempt=, attempts=)`
+`build_report(operation=, trace=, exc=, skipped=, facts=, cause=, noun=, attempt=, attempts=, failed_stage=, failed_detail=)`
 and `report_attempt(attempt, operation=, facts=, cause=, noun=, attempts=)`
-return a dict in a fixed key order. Everything a session can put on a sensor:
+return a dict in a fixed key order: `REPORT_KEYS`, then `FACT_KEYS`, then any
+other key passed in `facts=`, then one `<stage>_s` per timed stage, then the
+trace's `note()` facts. Everything a session can put on a sensor:
 
 | key | when | meaning |
 |---|---|---|
@@ -210,7 +238,10 @@ only per §1.
   `facts` (the radio facts). Return your sentence, or `None` for the generic
   one. It runs only for a failure, with the exception present. A callback taking
   `(stage, detail, error, facts)` or `(stage, detail, error, facts, exc)` still
-  works and raises `DeprecationWarning` (removed in 1.0).
+  works, raises `DeprecationWarning` (Python hides it outside tests, so one
+  warning per callback is also logged) and goes in 1.0. A callback with `*args`
+  receives a single `Failure`. `Cause` is now typed `Callable[[Failure], ...]`, so
+  a type checker flags an old-shape callback before the runtime does.
 - **`retry_if`** — `Callable[[Attempt], bool]`, called for a failed attempt.
 - **`guard`** — `async () -> value | None`; a non-`None` value declines the
   attempt and becomes `Attempt.skipped`.

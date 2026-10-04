@@ -24,10 +24,12 @@ help, and a contract document that the build keeps in step with the code.
 - `docs/contract.md`: every public name with its tier, what each piece
   guarantees, every error, report key and cause key, the callback shapes, what
   the integration provides, and the versioning and deprecation rule.
-  `tests/test_docs_contract.py` fails when the code gains a name, stage, error,
-  report key or cause key that the page does not mention.
+  `tests/test_docs_contract.py` fails when the code gains a public name, stage,
+  error, report key, cause key, test fake, or `Attempt` / `SessionTrace` member
+  that the page does not mention. `tests/test_adopting_example.py` runs the
+  integration and the test that `docs/adopting.md` shows, as written.
 - `Failure(stage, detail, error, exc, facts)` and the `Cause` type: what a
-  `cause` callback receives.
+  `cause` callback receives. `REPORT_KEYS`: the report's own keys, in order.
 - `guarded_write()`: one write with the drop check and a bound, shared by
   `Notifications.request()` and `write_chunks()`. `WRITE_TIMEOUT_S` (10 s).
 - `WriteTimeout`, a `NotificationTimeout` raised when a write does not return.
@@ -57,6 +59,24 @@ help, and a contract document that the build keeps in step with the code.
   `max_attempts` before.
 - `likely_cause_key` has a new value, `write_timeout`, for a `WriteTimeout`
   (before: `transfer.no_answer` and its siblings, by stage).
+- The `error` text of a write that did not return changes. Old (from
+  `Notifications.request()`): "No response from device within Ns after STEP".
+  New: "A write did not complete within Ns during STEP". Code that matched the
+  old text to recognise a hung write should test `isinstance(exc, WriteTimeout)`.
+  `WriteTimeout` is still a `NotificationTimeout`, so a `cause` callback that
+  tests that type matches it first; test for `WriteTimeout` before it.
+- A `TimeoutError` raised by the backend's own write is not renamed: only the
+  library's bound becomes `WriteTimeout`, and a write that hung because the
+  link dropped is `SessionDropped`.
+- `GattMismatch` is final (`retryable = False`) for a missing service,
+  characteristic or property. A too-small write size and a failed lookup stay
+  retryable, because both can be transient (the MTU is not negotiated yet;
+  services are not discovered yet).
+- `Cause` is typed `Callable[[Failure], ...]`: a type checker flags a callback
+  with the older shape before the runtime does. At runtime it still works, with
+  a `DeprecationWarning` and one logged warning per callback (Python hides the
+  former outside tests).
+- `BleSessionError.__init__` accepts `retryable=`.
 
 ## [0.6.0] — 2026-10-04
 

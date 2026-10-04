@@ -297,6 +297,45 @@ which you rebuild from `rssi`, `via` and `paths` — already in the report —
 rather than translating that fragment. A sentence from *your* `cause`
 callback carries no key, because you already own its wording.
 
+## A protocol with a payload
+
+A device that takes a large payload (an image, a firmware block) looks up its
+characteristic once the link has settled, sizes its chunks from what the link
+allows, and writes them with `write_chunks()`:
+
+```python
+from blesession import characteristic_or_raise, write_chunks
+
+async with ble_session(device, trace=trace, settle_s=0.5) as client:
+    char = characteristic_or_raise(
+        client,
+        SERVICE_UUID,
+        WRITE_UUID,
+        properties=("write-without-response",),
+        min_write_size=20,
+        label="ACME",
+    )
+    size = min(MAX_CHUNK, char.max_write_without_response_size)
+    with trace.timed("transfer"):
+        await write_chunks(
+            client, char, payload, size,
+            step="upload",
+            gap_s=pacing_s,                          # yours: pacing is policy
+            wrap=lambda offset, chunk: offset.to_bytes(4, "little") + chunk,
+            on_chunk=lambda sent: trace.note(sends=sent),
+        )
+```
+
+`settle_s` comes first because the write size is bleak's 20-byte default
+until the MTU is known. A device without the characteristic ends the attempt
+as `GattMismatch` with its own failure sentence, and is not retried; each
+write is bounded (`WriteTimeout`) and a dropped link ends the transfer as
+`SessionDropped`.
+
+If your `cause` callback has a sentence for a silent device, test for
+`WriteTimeout` first (it is a `NotificationTimeout`), or the hung write gets
+your sentence instead of the generic `write_timeout` one.
+
 ## Keeping the link across sessions
 
 For a device with a `keep_connection` option:
@@ -318,26 +357,41 @@ and the trace notes `reused=True`.
 behave the same way:
 
 ```python
+import pytest
 from blesession import session as session_mod
 from blesession.testing import FakeClient, FakeDevice, fake_connect
+from homeassistant.exceptions import HomeAssistantError
+
+import acme_tag.tag as tag_module
 
 
-async def test_a_rejected_key_names_the_auth_stage(monkeypatch):
+async def test_a_rejected_key_names_the_auth_stage_and_is_not_retried(monkeypatch):
     client = FakeClient()
+    # The connection, and the two things only Home Assistant can supply: the
+    # device handle and the radio facts. Patch them where the integration
+    # imported them, so the test needs neither Bluetooth nor a running hass.
     monkeypatch.setattr(session_mod, "establish_connection", fake_connect(client))
+    monkeypatch.setattr(tag_module, "ble_device_or_raise", lambda hass, address: FakeDevice(address))
+    monkeypatch.setattr(tag_module, "radio_facts", lambda hass, address, link: {})
     # The tag answers the unlock command by refusing the key. (A reply queued
     # before the command would be dropped: `request()` discards stale replies.)
     client.on_write = lambda char, data: client.reply(b"\x05")
 
-    tag = AcmeTag(hass, "AA:BB:CC:DD:EE:FF", retries=1)
+    tag = tag_module.AcmeTag(None, "AA:BB:CC:DD:EE:FF", retries=3)
     with pytest.raises(HomeAssistantError):
         await tag.read()
 
+    assert len(client.writes) == 1  # a rejected key is final: one attempt, not three
     report = tag.reports.last_failure
     assert report["failed_stage"] == "auth"
     assert report["failed_detail"] == "unlock"
     assert "paired to another hub" in report["likely_cause"]
 ```
+
+The session itself needs no Home Assistant; only `ble_device_or_raise` and
+`radio_facts` do, which is why they are the two names patched. Importing
+`homeassistant` at the top of your module is fine in a test run inside Home
+Assistant's own test harness; elsewhere, stub the two names you import from it.
 
 `client.reply(data)` delivers a notification (or queues it for the next
 subscriber), `client.on_write` answers each command written, `client.drop()` takes the link down and fires the disconnect

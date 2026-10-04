@@ -184,17 +184,21 @@ def test_importing_the_core_never_imports_homeassistant():
     code = textwrap.dedent(
         """
         import importlib, pkgutil, sys
-        import blesession
 
         class Block:
+            # In place before blesession is imported, so a core module that
+            # imports homeassistant (even lazily at import time) fails here.
             def find_spec(self, name, path=None, target=None):
                 if name == "homeassistant" or name.startswith("homeassistant."):
                     raise ImportError("homeassistant must not be imported by the core")
 
         sys.meta_path.insert(0, Block())
+        import blesession
+
         for mod in pkgutil.iter_modules(blesession.__path__):
             if mod.name != "hass":
                 importlib.import_module(f"blesession.{mod.name}")
+        assert "homeassistant" not in sys.modules
         """
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
@@ -207,3 +211,103 @@ async def test_on_write_lets_a_fake_answer_a_command_the_way_a_device_does():
     async with Notifications(client, "n") as replies:
         reply = await replies.request("w", b"\x01", timeout=1, step="cmd")
     assert reply == b"\x00\x01"
+
+
+# ── write guarantees, edge by edge ────────────────────────────────────────
+
+
+async def test_a_backend_timeout_from_the_write_is_not_renamed():
+    for bound in (10.0, None):
+        client = FakeClient()
+        client.fail_write = TimeoutError("backend gatt timeout")
+        with pytest.raises(TimeoutError, match="backend gatt timeout") as info:
+            await guarded_write(client, "w", b"x", step="s", timeout=bound)
+        assert not isinstance(info.value, WriteTimeout)
+
+
+async def test_a_write_that_hung_because_the_link_dropped_is_a_dropped_link():
+    dropped = asyncio.Event()
+    client = FakeClient()
+    client.write_delay_s = 3600
+    asyncio.get_running_loop().call_later(0.01, dropped.set)
+    with pytest.raises(SessionDropped) as info:
+        await guarded_write(client, "w", b"x", step="upload", timeout=0.05, dropped=dropped)
+    assert info.value.detail == "upload"
+
+
+async def test_wrap_is_not_called_for_a_chunk_that_will_not_be_written():
+    from blesession import session as session_mod
+
+    client = FakeClient()
+    dropped = asyncio.Event()
+    dropped.set()
+    session_mod._DROPPED[client] = dropped
+    framed = []
+    with pytest.raises(SessionDropped):
+        await write_chunks(
+            client, "w", b"abc", 1, step="s", wrap=lambda o, c: framed.append(o) or c
+        )
+    assert framed == []
+
+
+# ── cause: arity edge cases ───────────────────────────────────────────────
+
+
+def test_a_fifth_parameter_with_a_default_still_gets_the_error():
+    got = []
+
+    def legacy(stage, detail, error, facts, exc=None):
+        got.append(exc)
+
+    exc = SessionDropped("gone")
+    with pytest.warns(DeprecationWarning, match=r"\(stage, detail, error, facts, exc\)"):
+        _report(legacy, exc)
+    assert got == [exc]
+
+
+def test_a_failure_taking_callback_with_an_optional_extra_is_not_legacy(recwarn):
+    def cause(failure, extra=None):
+        return "new"
+
+    assert _report(cause)["likely_cause"] == "new"
+    assert not [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
+
+
+def test_the_deprecation_points_at_the_callers_line_and_is_logged_once(caplog):
+    import warnings
+
+    def legacy(stage, detail, error, facts):
+        return None
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _report(legacy)
+        _report(legacy)
+    assert caught[0].filename == __file__
+    assert len([r for r in caplog.records if "deprecated" in r.getMessage()]) == 1
+
+
+# ── retryable, per instance ───────────────────────────────────────────────
+
+
+def test_a_too_small_write_size_and_a_failed_lookup_are_retryable_a_missing_profile_is_not():
+    from bleak.exc import BleakError
+
+    from blesession import characteristic_or_raise
+
+    client = FakeClient()
+    client.add_characteristic("svc", "ch", max_write_without_response_size=20)
+    with pytest.raises(GattMismatch) as small:
+        characteristic_or_raise(client, "svc", "ch", min_write_size=240)
+    assert small.value.retryable is True
+    with pytest.raises(GattMismatch) as absent:
+        characteristic_or_raise(client, "svc", "other")
+    assert absent.value.retryable is False
+
+    def boom(uuid):
+        raise BleakError("not discovered")
+
+    client.services.get_service = boom
+    with pytest.raises(GattMismatch) as failed:
+        characteristic_or_raise(client, "svc", "ch")
+    assert failed.value.retryable is True

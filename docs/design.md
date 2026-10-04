@@ -262,7 +262,7 @@ present are retired in favour of this; a transfer-specific flag becomes
 | level        | what                                          | owner                           |
 |--------------|-----------------------------------------------|---------------------------------|
 | step         | one notification wait                         | protocol code, via `Notifications` |
-| write        | one GATT write (`WRITE_TIMEOUT_S` by default)  | `guarded_write()`, so `request()` and `write_chunks()` |
+| write        | one GATT write: `WRITE_TIMEOUT_S` in `write_chunks()`, the reply `timeout` in `request()` unless `write_timeout=` | `guarded_write()` |
 | attempt      | one try, connecting included                  | `run_attempts()`, value from the integration |
 | disconnect   | the close, with its own bound, inside the attempt bound | `ble_session()` |
 | unsubscribe  | `stop_notify`, with its own bound, inside the attempt bound | `Notifications` (`STOP_NOTIFY_TIMEOUT_S`) |
@@ -523,9 +523,12 @@ policy.
 **Why the `cause` callback takes one `Failure`.** It began as positional
 arguments and gained one (`exc`) in 0.6, which broke every callback. A single
 object lets a field be added without breaking anyone; the older shapes are
-accepted with a `DeprecationWarning` until 1.0. Log-level rule: a failed
-attempt is debug, the final failure is one warning, never an error with a
-traceback.
+accepted with a `DeprecationWarning` until 1.0.
+
+Log-level rule for an integration: a failed attempt is debug, the final
+failure is one warning, never an error with a traceback. (The library itself
+logs failed attempts at debug and leaves the final warning to the
+integration.)
 
 ### 11. Option keys — `const.py`
 

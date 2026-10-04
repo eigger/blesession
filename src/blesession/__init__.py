@@ -31,7 +31,15 @@ from .errors import (
 from .gatt import characteristic_or_raise
 from .link import LinkInfo, connected_via, is_proxy, probe_link
 from .notifications import Notifications
-from .report import FACT_KEYS, Cause, Failure, SessionReports, build_report, report_attempt
+from .report import (
+    FACT_KEYS,
+    REPORT_KEYS,
+    Cause,
+    Failure,
+    SessionReports,
+    build_report,
+    report_attempt,
+)
 from .session import DISCONNECT_TIMEOUT_S, ble_session, dropped_event, still_up
 from .subscribe import NOTIFY_ATTEMPTS, STOP_NOTIFY_TIMEOUT_S, start_notify_with_recovery
 from .trace import SessionTrace, traced
@@ -46,6 +54,7 @@ __all__ = [
     "DISCONNECT_TIMEOUT_S",
     "FACT_KEYS",
     "NOTIFY_ATTEMPTS",
+    "REPORT_KEYS",
     "STOP_NOTIFY_TIMEOUT_S",
     "Attempt",
     "AttemptTimedOut",

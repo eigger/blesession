@@ -23,6 +23,11 @@ proxy that died mid-transfer leaves it hanging until the attempt bound fires.
 This is the shorter, per-write limit under that bound; `None` removes it."""
 
 
+def _raise_if_dropped(dropped: asyncio.Event | None, step: str, phase: str) -> None:
+    if dropped is not None and dropped.is_set():
+        raise SessionDropped(f"The link dropped {phase} {step}", detail=step)
+
+
 async def guarded_write(
     client: BleakClient,
     characteristic: Any,
@@ -47,14 +52,18 @@ async def guarded_write(
     """
     if dropped is None:
         dropped = dropped_event(client)
-    if dropped is not None and dropped.is_set():
-        raise SessionDropped(f"The link dropped {phase} {step}", detail=step)
+    _raise_if_dropped(dropped, step, phase)
+    scope = asyncio.timeout(timeout)
     try:
-        async with asyncio.timeout(timeout):
+        async with scope:
             await client.write_gatt_char(characteristic, data, response=response)
     except TimeoutError as exc:
-        if timeout is None:
-            raise
+        if not scope.expired():
+            raise  # the backend's own timeout: not ours to rename
+        # The bound fired. A write that hung because the link went away is the
+        # link's failure, not the adapter's.
+        _raise_if_dropped(dropped, step, "during")
+        assert timeout is not None
         raise WriteTimeout(timeout, step=step) from exc
 
 
@@ -85,8 +94,10 @@ async def write_chunks(
     """
     if size < 1:
         raise ValueError(f"size must be at least 1, not {size}")
+    dropped = dropped_event(client)
     sent = 0
     for offset in range(0, len(data), size):
+        _raise_if_dropped(dropped, step, "during")  # before framing a chunk nobody will send
         chunk = data[offset : offset + size]
         if wrap is not None:
             chunk = wrap(offset, chunk)
@@ -97,6 +108,7 @@ async def write_chunks(
             step=step,
             response=response,
             timeout=write_timeout,
+            dropped=dropped,
             phase="during",
         )
         sent += 1
