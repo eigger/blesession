@@ -60,7 +60,7 @@ Requires Python 3.13+. The core depends only on bleak / bleak-retry-connector;
 | `link.py` | the *one* place that probes bleak / habluetooth internals for the radio a link took |
 | `blesession.testing` | `FakeClient` / `fake_connect()` so every integration's tests fake bleak the same way |
 | `build_report()` | fixed attribute key order; generic likely-cause sentences with a translatable key, your device sentences first |
-| `SessionReports` | the last session and the last failure, so a success does not erase the evidence |
+| `SessionReports` | the last session, the last failure (with its count and time) and the last retried attempt, so a success does not erase the evidence |
 | errors | `ConnectionError` subclasses so an off device never becomes a traceback; `retryable` says whether another attempt can help; `DeviceError` is yours to raise for a device-reported fault |
 | `Failure` | what your `cause` callback receives: the stage, the error, the radio facts |
 

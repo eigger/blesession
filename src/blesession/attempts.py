@@ -51,6 +51,10 @@ class Attempt[T]:
     timed_out: bool = False
     skipped: Any = None
     """What `guard` returned when it declined to run this attempt."""
+    retrying: bool = False
+    """Whether another attempt follows this one. Set by `run_attempts()` before
+    `on_attempt` sees the attempt, so a recorder can tell a failure that is
+    about to be retried from the final one. False on an Attempt built by hand."""
     state: dict[str, Any] = field(default_factory=dict)
     """Scratch for `retry_if` / the attempt function across attempts (pacing
     counters, ...). Copied forward from the previous attempt."""
@@ -103,7 +107,9 @@ async def run_attempts[T](
     error, the trace and the stage, and the integration decides what to
     raise or publish. An exception from your own `guard`, `on_attempt` or
     `retry_if` is not an attempt failure and propagates (`guard` runs holding
-    the lock, which is released on the way out). `on_attempt` sees every attempt as it finishes — a
+    the lock, which is released on the way out). `retry_if` runs before
+    `on_attempt`, so an attempt whose `retry_if` raised is never handed to it.
+    `on_attempt` sees every other attempt as it finishes — a
     failed one, a successful one, and one a `guard` declined — outside the
     lock, so recording it cannot hold up other devices. Only the last
     attempt is returned, so `on_attempt` is the only way to record the
@@ -149,14 +155,23 @@ async def run_attempts[T](
                         exc_info=attempt.error,
                     )
         state = attempt.state
+        # Whether another attempt follows, decided before `on_attempt` sees
+        # this one: only the loop knows (`retry_if` may stop a retry early, a
+        # timed-out attempt is final), and a recorder must not infer it from
+        # the attempt count. A declined attempt is never retried: the guard
+        # decided, not the device.
+        attempt.retrying = bool(
+            attempt.error is not None
+            and attempt.skipped is None
+            and number < max_attempts
+            and retry_if(attempt)
+        )
         # Outside the lock, and for a declined attempt too: `on_attempt` is
         # how a caller records every attempt, and one it never sees is one
         # that cannot be published.
         if on_attempt is not None:
             on_attempt(attempt)
-        if attempt.skipped is not None:
-            return attempt  # not retried: the guard decided, not the device
-        if attempt.ok or number == max_attempts or not retry_if(attempt):
+        if not attempt.retrying:
             return attempt
         # Lock released: other devices go first. Module-level `sleep` so an
         # integration's tests can stub the pause.

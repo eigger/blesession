@@ -199,3 +199,13 @@ def test_a_link_whose_route_is_unknown_falls_back_and_says_so(bluetooth, radio_f
 
     assert facts["via"] == "office-proxy"
     assert facts["via_unconfirmed"] is True
+
+
+def test_a_lookup_that_raises_yields_no_facts_not_an_exception(bluetooth, radio_facts):
+    """Facts are evaluated before build_report; they must not fail the report."""
+
+    def boom(_hass, _address, connectable=True):
+        raise RuntimeError("adapter went away")
+
+    bluetooth.async_scanner_devices_by_address = boom
+    assert radio_facts() == {}

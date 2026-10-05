@@ -41,13 +41,14 @@ behaviour is.
 | `stop_notify_best_effort` | Helper | unsubscribe in cleanup: skipped on a dead link, bounded, never raises |
 | `NOTIFY_ATTEMPTS`, `STOP_NOTIFY_TIMEOUT_S`, `DISCONNECT_TIMEOUT_S` | Helper | the bounds those helpers use |
 | `run_attempts` | Helper | the lock-per-attempt loop (§3.5) |
-| `Attempt` | Contract | one try: `number`, `trace`, `state`, `result`, `error`, `skipped`, `timed_out`, `ok`, `failed_stage`, `failed_detail` |
+| `Attempt` | Contract | one try: `number`, `trace`, `state`, `result`, `error`, `skipped`, `retrying`, `timed_out`, `ok`, `failed_stage`, `failed_detail` |
 | `default_retry_if` | Helper | retry unless the attempt timed out or the error is final (§5) |
 | `SessionTrace` | Contract | nested stage timings and facts (§4) |
 | `traced` | Helper | time a method as one stage of `self.trace` |
 | `stages` | Contract | the primary stage names (§4) |
-| `build_report`, `report_attempt` | Contract | the attribute dict (§6) |
-| `SessionReports` | Helper | the `last` / `last_failure` slots |
+| `build_report`, `report_attempt`, `fallback_report` | Contract | the attribute dict (§6); a minimal one that cannot fail |
+| `classify`, `Kind` | Contract | how a report counts: `ok`, `failure`, `retried`, `skipped` (§6.1) |
+| `SessionReports` | Helper | the `last` / `last_failure` / `last_retry` slots, the failure count and time, the latest report per operation (`by_operation_last`, `of()`), listeners (§6.1) |
 | `REPORT_KEYS`, `FACT_KEYS` | Contract | the report's own keys, and the radio keys, in report order (§6) |
 | `Failure`, `Cause` | Contract | what a `cause` callback receives and returns (§7) |
 | `CAUSES`, `cause_key`, `generic_cause`, `placement` | Contract | the generic sentences, their keys, the weak-signal advice (§8) |
@@ -139,6 +140,11 @@ settled.
   retried by default (the transport is dead, not the device unwilling).
 - `guard` runs under the lock before the attempt and may decline it
   (`skipped`); `on_attempt` sees every attempt, including declined ones.
+- `Attempt.retrying` says whether another attempt follows. The loop sets it
+  **before** `on_attempt`: true when the attempt failed, was not declined, is
+  not the last, and `retry_if` returned true. `retry_if` is therefore called
+  before `on_attempt`; an attempt whose `retry_if` raised is not handed to
+  `on_attempt`. An `Attempt` built by hand has `retrying=False`.
 - It never raises for a failed attempt: the returned `Attempt` carries the
   outcome.
 
@@ -208,7 +214,7 @@ code), `run_attempts` still records it with the stage from the trace.
 
 ## 6. The report
 
-`build_report(operation=, trace=, exc=, skipped=, facts=, cause=, noun=, attempt=, attempts=, failed_stage=, failed_detail=)`
+`build_report(operation=, trace=, exc=, skipped=, facts=, cause=, noun=, attempt=, attempts=, retrying=, failed_stage=, failed_detail=)`
 and `report_attempt(attempt, operation=, facts=, cause=, noun=, attempts=)`
 return a dict in a fixed key order: `REPORT_KEYS`, then `FACT_KEYS`, then any
 other key passed in `facts=`, then one `<stage>_s` per timed stage, then the
@@ -226,6 +232,7 @@ trace's `note()` facts. Everything a session can put on a sensor:
 | `likely_cause_key` | generic sentence | its stable name (§8) |
 | `timed_out` | attempt bound fired | the transport died, not the device |
 | `attempt`, `attempts` | via `report_attempt` | which try, out of how many |
+| `retrying` | a failed attempt another follows | `True`; absent otherwise (§6.1) |
 | `via`, `via_type`, `rssi`, `paths`, `advertised_via`, `via_unconfirmed` | radio known | `FACT_KEYS`, from `radio_facts()` |
 | `<stage>_s` | timed | seconds, in the order stages finished |
 | `reused`, `disconnect_error`, `stale_close_error` | when they happen | `keep`/`client=` reuse; a close that failed |
@@ -233,6 +240,44 @@ trace's `note()` facts. Everything a session can put on a sensor:
 
 A key is added without notice; one is renamed, removed or changes meaning
 only per §1.
+
+A report never fails to build because of its diagnostics: a `cause` callback
+that raises is logged as a warning once per callback (debug after that) and the
+generic sentence is used; a `Warning` it raises (a deprecation turned into an
+error) is not swallowed. `blesession.hass.radio_facts()` returns `{}` (logged at
+debug) when the adapter or scanner lookup raises (including Home Assistant being
+absent).
+
+`fallback_report(operation, *, trace=None, exc=None, attempt=None)` is the
+report for when building one failed anyway: outcome, `error`, the failed stage,
+and, given an `attempt`, `skipped`, `attempt` and `retrying` (the attempt's own
+trace and error win). It cannot raise.
+
+### 6.1 `classify()` and `SessionReports`
+
+`classify(report)` reads the facts in the report alone:
+
+| kind | when |
+|---|---|
+| `skipped` | the report has a `skipped` key (a guard declined) |
+| `ok` | no `error` |
+| `retried` | `error` and `retrying` — another attempt follows |
+| `failure` | `error`, no `retrying` |
+
+`SessionReports.record(report, *, now=None)` files it: every kind becomes
+`last` and the latest of its `operation` (`of(operation)`); a `failure` also
+sets `last_failure`, increments `failures` and sets `last_failure_at` (UTC); a
+`retried` sets `last_retry` only — the write may still succeed, so it is not a
+failure, but the evidence of the intermittent attempt is kept. `last_kind` is
+the kind of the report filed last. `add_listener(cb)` is called after every
+`record` and returns the function that removes it; a listener that raises is
+logged and does not stop `record`. `clear()` forgets every report and count
+(listeners stay).
+
+Whether a session is recorded at all is the integration's call, made by not
+calling `record`: **a cancelled session (`CancelledError`) is never recorded**,
+and a poll that finds an advertisement-driven device asleep is the
+integration's to leave out.
 
 ## 7. Callback shapes
 
@@ -245,11 +290,13 @@ only per §1.
   warning per callback is also logged) and goes in 1.0. A callback with `*args`
   receives a single `Failure`. `Cause` is now typed `Callable[[Failure], ...]`, so
   a type checker flags an old-shape callback before the runtime does.
-- **`retry_if`** — `Callable[[Attempt], bool]`, called for a failed attempt.
+- **`retry_if`** — `Callable[[Attempt], bool]`, called for a failed attempt that
+  is not the last and was not declined, **before** `on_attempt`; its result is
+  `Attempt.retrying`.
 - **`guard`** — `async () -> value | None`; a non-`None` value declines the
   attempt and becomes `Attempt.skipped`.
-- **`on_attempt`** — `Callable[[Attempt], None]`, after every attempt, outside
-  the lock. Record reports here, not from what `run_attempts` returns.
+- **`on_attempt`** — `Callable[[Attempt], None]`, after every attempt (except one
+  whose `retry_if` raised), outside the lock. Record reports here, not from what `run_attempts` returns.
 - **`stage_map`** — `{your stage name: primary stage}`.
 
 ## 8. Cause keys
@@ -290,7 +337,9 @@ error that lost its type, such as a proxy's backend wording.
 4. A **`cause` callback** with the sentences only your device can say; an
    empty one is fine.
 5. The **lock**, its scope, the retry count, the attempt bound, the pause.
-6. **Recording** every attempt into `SessionReports` from `on_attempt`.
+6. **Recording** every attempt into `SessionReports` from `on_attempt` (or
+   one session per `record` outside `run_attempts`), except a cancelled one,
+   and deciding which expected failures (a device asleep) are left out.
 7. **Tests** with `blesession.testing.FakeClient`, not a hand-made mock.
 
 What stays yours, deliberately: retry counts and backoff, packet pacing, lock

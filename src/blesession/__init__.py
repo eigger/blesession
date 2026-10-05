@@ -36,8 +36,11 @@ from .report import (
     REPORT_KEYS,
     Cause,
     Failure,
+    Kind,
     SessionReports,
     build_report,
+    classify,
+    fallback_report,
     report_attempt,
 )
 from .session import DISCONNECT_TIMEOUT_S, ble_session, dropped_event, still_up
@@ -50,7 +53,7 @@ from .subscribe import (
 from .trace import SessionTrace, traced
 from .transfer import WRITE_TIMEOUT_S, guarded_write, write_chunks
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 """The one place the version is written; pyproject.toml reads it."""
 
 __all__ = [
@@ -68,6 +71,7 @@ __all__ = [
     "DeviceError",
     "Failure",
     "GattMismatch",
+    "Kind",
     "LinkInfo",
     "NotificationTimeout",
     "Notifications",
@@ -81,10 +85,12 @@ __all__ = [
     "build_report",
     "characteristic_or_raise",
     "cause_key",
+    "classify",
     "connected_via",
     "default_retry_if",
     "dropped_event",
     "error_text",
+    "fallback_report",
     "generic_cause",
     "guarded_write",
     "is_proxy",

@@ -287,9 +287,12 @@ async def test_recording_only_the_returned_attempt_loses_the_failure_a_retry_hid
     assert last.ok
     for reports in (per_attempt, returned_only):
         assert reports.last["success"] is True and reports.last["attempt"] == 2
-    assert per_attempt.last_failure["attempt"] == 1
-    assert per_attempt.last_failure["failed_stage"] == "transfer"
-    assert returned_only.last_failure is None  # the whole point of on_attempt
+    # The retried attempt is evidence, not a failure: the write succeeded.
+    assert per_attempt.last_failure is None and per_attempt.failures == 0
+    assert per_attempt.last_retry["attempt"] == 1
+    assert per_attempt.last_retry["failed_stage"] == "transfer"
+    assert per_attempt.last_retry["retrying"] is True
+    assert returned_only.last_retry is None  # the whole point of on_attempt
 
 
 async def test_on_attempt_sees_a_declined_attempt_too(no_sleep):

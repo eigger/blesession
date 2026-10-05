@@ -13,6 +13,43 @@ so any change to them is at least a minor bump and is listed here.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-10-05
+
+`SessionReports` takes over the failure count, the failure time, the
+per-operation slot and the listeners every integration wrote by hand, and
+`run_attempts()` says whether an attempt will be retried.
+
+### Added
+
+- `Attempt.retrying` (default `False`): set by `run_attempts()` before
+  `on_attempt`; true when the attempt failed, was not declined, is not the last
+  and `retry_if` returned true. The report carries it as `retrying: True`
+  (after `attempts` in `REPORT_KEYS`; `build_report(retrying=)`).
+- `classify(report)` and `Kind` (`ok`, `failure`, `retried`, `skipped`).
+- `SessionReports`: `last_retry`, `failures`, `last_failure_at`,
+  `by_operation_last` / `of(operation)`, `last_kind`, `add_listener()`.
+- `fallback_report(operation, *, trace=None, exc=None, attempt=None)`: a
+  minimal report that cannot fail.
+
+### Changed
+
+- **`SessionReports.last_failure` now means a failure no further attempt
+  follows.** Before, a report recorded from `on_attempt` for an attempt that
+  failed and was retried became `last_failure`; it now goes to `last_retry`.
+  Callers that record only single-attempt reports (no `retrying` key) see no
+  difference. `tests/test_attempts.py` and the docs are updated.
+- `run_attempts()` calls `retry_if` **before** `on_attempt` (so `retrying` can
+  be set); an attempt whose `retry_if` raised is no longer handed to
+  `on_attempt`.
+- `retry_if`'s side effects (for example a counter in `Attempt.state`) are now
+  visible to `on_attempt`, which runs after it.
+- `build_report()` no longer raises when a `cause` callback raises, and
+  `blesession.hass.radio_facts()` returns `{}` when its lookup raises. The
+  callback's exception is logged as a warning once per callback (a `Warning` it
+  raises is re-raised); the lookup's at debug; the report is built with what is
+  known.
+- `SessionReports.clear()` also resets the counters and `last_failure_at`.
+
 ## [0.8.0] — 2026-10-04
 
 The unsubscribe `Notifications` already did, for an integration's own
