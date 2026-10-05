@@ -422,8 +422,8 @@ reports.last_failure   # on the diagnostic sensor
 
 Record from `on_attempt`, not from what `run_attempts()` returns: it hands
 back the **last** attempt only, so filing that one alone loses a first
-attempt that failed and a second that worked — exactly the intermittent
-failure the second slot exists to keep. `on_attempt` sees every attempt,
+attempt that failed and a second that worked — exactly the evidence
+`last_retry` exists to keep. `on_attempt` sees every attempt,
 including one a `guard` declined, so the rule above holds for whichever
 slot each one belongs in. Filing the returned attempt is right only when
 `last_failure` should mean "the last session that failed overall" — but
@@ -443,7 +443,7 @@ went on to succeed is kept as evidence without counting as a failure.
 
 A session a `guard` declined is `last` but not `last_failure`. Nothing was
 tried, so it must not overwrite the last real failure with "the write lock
-was held" — the slot keys on `error`, not on `success`.
+was held" — `classify()` puts `skipped` first, then `error`, not `success`.
 
 ### 9. Generic likely-cause sentences — `causes.py`
 

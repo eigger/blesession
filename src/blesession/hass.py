@@ -51,7 +51,7 @@ def ble_device_or_raise(
     return device
 
 
-def _never_raises(func: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+def _never_raises[**P](func: Callable[P, dict[str, Any]]) -> Callable[P, dict[str, Any]]:
     """Facts are diagnostics: a lookup that fails yields none, not an exception.
 
     `radio_facts` is evaluated by the caller before `build_report` runs, so an
@@ -60,7 +60,7 @@ def _never_raises(func: Callable[..., dict[str, Any]]) -> Callable[..., dict[str
     """
 
     @functools.wraps(func)
-    def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> dict[str, Any]:
         try:
             return func(*args, **kwargs)
         except Exception:  # noqa: BLE001

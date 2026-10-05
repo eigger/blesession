@@ -41,6 +41,8 @@ per-operation slot and the listeners every integration wrote by hand, and
 - `run_attempts()` calls `retry_if` **before** `on_attempt` (so `retrying` can
   be set); an attempt whose `retry_if` raised is no longer handed to
   `on_attempt`.
+- `retry_if`'s side effects (for example a counter in `Attempt.state`) are now
+  visible to `on_attempt`, which runs after it.
 - `build_report()` no longer raises when a `cause` callback raises, and
   `blesession.hass.radio_facts()` returns `{}` when its lookup raises; both
   are logged at debug and the report is built with what is known.

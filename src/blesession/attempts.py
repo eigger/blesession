@@ -107,7 +107,9 @@ async def run_attempts[T](
     error, the trace and the stage, and the integration decides what to
     raise or publish. An exception from your own `guard`, `on_attempt` or
     `retry_if` is not an attempt failure and propagates (`guard` runs holding
-    the lock, which is released on the way out). `on_attempt` sees every attempt as it finishes — a
+    the lock, which is released on the way out). `retry_if` runs before
+    `on_attempt`, so an attempt whose `retry_if` raised is never handed to it.
+    `on_attempt` sees every other attempt as it finishes — a
     failed one, a successful one, and one a `guard` declined — outside the
     lock, so recording it cannot hold up other devices. Only the last
     attempt is returned, so `on_attempt` is the only way to record the
@@ -158,7 +160,7 @@ async def run_attempts[T](
         # timed-out attempt is final), and a recorder must not infer it from
         # the attempt count. A declined attempt is never retried: the guard
         # decided, not the device.
-        attempt.retrying = (
+        attempt.retrying = bool(
             attempt.error is not None
             and attempt.skipped is None
             and number < max_attempts

@@ -102,6 +102,27 @@ def _identity(cause: Callable[..., Any]) -> tuple[str, str, int]:
     )
 
 
+_RAISED: set[tuple[str, str, int]] = set()
+
+
+def _log_cause_error(cause: Callable[..., Any]) -> None:
+    """One warning per callback (with the traceback), debug after that.
+
+    The report is built with the generic sentence, so the session is not
+    masked; but a bug in the integration's callback must be visible in the
+    ordinary log once, not only at debug.
+    """
+    key = _identity(cause)
+    first = key not in _RAISED
+    _RAISED.add(key)
+    _LOGGER.log(
+        logging.WARNING if first else logging.DEBUG,
+        "The cause callback %r raised; using the generic sentence",
+        cause,
+        exc_info=True,
+    )
+
+
 def _call_cause(cause: Callable[..., str | None], failure: Failure) -> str | None:
     """Call `cause` with a `Failure`, or with the pre-0.7 positional arguments.
 
@@ -233,10 +254,10 @@ def build_report(
         if likely is None and cause is not None:
             try:
                 likely = _call_cause(cause, Failure(stage, detail, error, exc, facts))
+            except Warning:
+                raise  # a deprecation the caller turned into an error is theirs to see
             except Exception:  # noqa: BLE001 - a report must not mask the session's outcome
-                _LOGGER.debug(
-                    "The cause callback raised; using the generic sentence", exc_info=True
-                )
+                _log_cause_error(cause)
                 likely = None
         if likely is None:
             likely, likely_key = generic_cause(stage, error, facts, exc=exc, noun=noun), generic_key
@@ -329,7 +350,10 @@ def fallback_report(
     if skipped is not None:
         report["skipped"] = skipped
     if exc is not None:
-        report["error"] = error_text(exc)
+        try:
+            report["error"] = error_text(exc)
+        except Exception:  # noqa: BLE001 - a __str__ that raises must not fail the fallback
+            report["error"] = type(exc).__name__
         stage = detail = None
         if trace is not None:
             try:
@@ -393,8 +417,10 @@ class SessionReports:
     failures: int = 0
     last_failure_at: datetime | None = None
     by_operation_last: dict[str, dict[str, Any]] = field(default_factory=dict)
-    _last_kind: Kind | None = field(default=None, repr=False)
-    _listeners: list[Callable[[], None]] = field(default_factory=list, repr=False)
+    _last_kind: Kind | None = field(default=None, init=False, repr=False, compare=False)
+    _listeners: list[Callable[[], None]] = field(
+        default_factory=list, init=False, repr=False, compare=False
+    )
 
     @property
     def last_kind(self) -> Kind | None:
@@ -457,5 +483,5 @@ class SessionReports:
         self.last_retry = None
         self.failures = 0
         self.last_failure_at = None
-        self.by_operation_last.clear()
+        self.by_operation_last = {}  # reassigned, so a copy of this object is not cleared with it
         self._last_kind = None

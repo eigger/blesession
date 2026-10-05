@@ -48,7 +48,7 @@ behaviour is.
 | `stages` | Contract | the primary stage names (§4) |
 | `build_report`, `report_attempt`, `fallback_report` | Contract | the attribute dict (§6); a minimal one that cannot fail |
 | `classify`, `Kind` | Contract | how a report counts: `ok`, `failure`, `retried`, `skipped` (§6.1) |
-| `SessionReports` | Helper | the `last` / `last_failure` / `last_retry` slots, the failure count and time, the latest report per operation, listeners (§6.1) |
+| `SessionReports` | Helper | the `last` / `last_failure` / `last_retry` slots, the failure count and time, the latest report per operation (`by_operation_last`, `of()`), listeners (§6.1) |
 | `REPORT_KEYS`, `FACT_KEYS` | Contract | the report's own keys, and the radio keys, in report order (§6) |
 | `Failure`, `Cause` | Contract | what a `cause` callback receives and returns (§7) |
 | `CAUSES`, `cause_key`, `generic_cause`, `placement` | Contract | the generic sentences, their keys, the weak-signal advice (§8) |
@@ -244,7 +244,9 @@ only per §1.
 A report never fails to build because of its diagnostics: a `cause` callback
 that raises is logged at debug and the generic sentence is used, and
 `blesession.hass.radio_facts()` returns `{}` (logged at debug) when the adapter
-or scanner lookup raises.
+or scanner lookup raises (including Home Assistant being absent). A `cause`
+callback's exception is logged as a warning once per callback; a `Warning` it
+raises (a deprecation turned into an error) is not swallowed.
 
 `fallback_report(operation, *, trace=None, exc=None, attempt=None)` is the
 report for when building one failed anyway: outcome, `error`, the failed stage,
@@ -288,11 +290,13 @@ integration's to leave out.
   warning per callback is also logged) and goes in 1.0. A callback with `*args`
   receives a single `Failure`. `Cause` is now typed `Callable[[Failure], ...]`, so
   a type checker flags an old-shape callback before the runtime does.
-- **`retry_if`** — `Callable[[Attempt], bool]`, called for a failed attempt.
+- **`retry_if`** — `Callable[[Attempt], bool]`, called for a failed attempt that
+  is not the last and was not declined, **before** `on_attempt`; its result is
+  `Attempt.retrying`.
 - **`guard`** — `async () -> value | None`; a non-`None` value declines the
   attempt and becomes `Attempt.skipped`.
-- **`on_attempt`** — `Callable[[Attempt], None]`, after every attempt, outside
-  the lock. Record reports here, not from what `run_attempts` returns.
+- **`on_attempt`** — `Callable[[Attempt], None]`, after every attempt (except one
+  whose `retry_if` raised), outside the lock. Record reports here, not from what `run_attempts` returns.
 - **`stage_map`** — `{your stage name: primary stage}`.
 
 ## 8. Cause keys

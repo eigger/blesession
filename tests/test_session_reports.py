@@ -6,6 +6,7 @@ whether one follows, so it says so (`Attempt.retrying`) before `on_attempt`.
 
 import asyncio
 import logging
+import warnings
 from datetime import UTC, datetime
 
 import pytest
@@ -252,7 +253,7 @@ def test_a_cause_callback_that_raises_does_not_fail_the_report(caplog):
         )
     assert report["error"] == "no slot"
     assert report["likely_cause"]  # the generic sentence
-    assert "cause callback raised" in caplog.text
+    assert "raised" in caplog.text
 
 
 def test_fallback_report_cannot_fail_and_keeps_the_stage():
@@ -280,3 +281,91 @@ def test_a_timed_out_failure_is_a_failure():
     reports = SessionReports()
     reports.record(build_report(operation="w", trace=SessionTrace(), exc=timed))
     assert reports.failures == 1
+
+
+def test_a_copy_is_not_cleared_with_the_original_and_listeners_are_not_compared():
+    import copy
+
+    original = SessionReports()
+    original.record({"operation": "w", "success": True})
+    clone = copy.copy(original)
+    clone.clear()
+    assert original.of("w") is not None
+    a, b = SessionReports(), SessionReports()
+    a.add_listener(lambda: None)
+    assert a == b
+
+
+def test_fallback_report_survives_an_exception_whose_str_raises():
+    class Bad(Exception):
+        def __str__(self):
+            raise ValueError("no text")
+
+    class Trace(SessionTrace):
+        def failure(self, exc):
+            raise RuntimeError("trace broke")
+
+    report = fallback_report("p", exc=Bad(), trace=Trace())
+    assert report == {"operation": "p", "success": False, "error": "Bad"}
+
+
+async def test_retrying_is_a_bool_even_when_retry_if_returns_a_truthy_value(no_sleep):
+    seen = []
+
+    async def attempt(a):
+        raise ConnectFailed("x")
+
+    await run_attempts(
+        attempt, max_attempts=2, retry_if=lambda _a: "yes", on_attempt=lambda a: seen.append(a)
+    )
+    assert seen[0].retrying is True
+
+
+def test_report_attempt_orders_retrying_after_attempts():
+    a = Attempt(number=1, trace=SessionTrace(), error=ConnectFailed("x"), retrying=True)
+    report = report_attempt(a, operation="w", attempts=3)
+    assert list(report).index("retrying") == list(report).index("attempts") + 1
+
+
+def test_a_listener_may_record_again_and_remove_itself():
+    reports = SessionReports()
+    seen = []
+
+    def listener():
+        seen.append(reports.last["operation"])
+        remove()
+        if len(seen) == 1:
+            reports.record({"operation": "again", "success": True})
+
+    remove = reports.add_listener(listener)
+    reports.record({"operation": "first", "success": True})
+    assert seen == ["first"] and reports.last["operation"] == "again"
+
+
+def test_a_cause_callback_error_is_a_warning_once_and_a_deprecation_is_not_swallowed(caplog):
+    def broken(_failure):
+        raise AttributeError("integration bug")
+
+    def build():
+        return build_report(
+            operation="w", trace=SessionTrace(), exc=ConnectFailed("x"), cause=broken
+        )
+
+    with caplog.at_level(logging.DEBUG, logger="blesession.report"):
+        build()
+        build()
+    warnings_logged = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings_logged) == 1 and "integration bug" in caplog.text
+
+    def legacy(stage, detail, error, facts):
+        return "MINE"
+
+    with pytest.warns(DeprecationWarning):
+        report = build_report(
+            operation="w", trace=SessionTrace(), exc=ConnectFailed("x"), cause=legacy
+        )
+    assert report["likely_cause"] == "MINE"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(DeprecationWarning):
+            build_report(operation="w", trace=SessionTrace(), exc=ConnectFailed("x"), cause=legacy)
