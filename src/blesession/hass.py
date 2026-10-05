@@ -6,6 +6,9 @@ dependency of this package, so every function imports it lazily.
 
 from __future__ import annotations
 
+import functools
+import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from bleak.backends.device import BLEDevice
@@ -15,6 +18,8 @@ from .link import LinkInfo
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def ble_device_or_raise(
@@ -46,6 +51,26 @@ def ble_device_or_raise(
     return device
 
 
+def _never_raises(func: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+    """Facts are diagnostics: a lookup that fails yields none, not an exception.
+
+    `radio_facts` is evaluated by the caller before `build_report` runs, so an
+    exception from the adapter or scanner would otherwise fail the report of
+    the session it was meant to describe. It is logged at debug.
+    """
+
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        try:
+            return func(*args, **kwargs)
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("Radio facts could not be read", exc_info=True)
+            return {}
+
+    return wrapper
+
+
+@_never_raises
 def radio_facts(hass: HomeAssistant, address: str, link: LinkInfo | None = None) -> dict[str, Any]:
     """Which radio the session went through, its RSSI and how many reach the device.
 

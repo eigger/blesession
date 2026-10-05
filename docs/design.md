@@ -65,7 +65,7 @@ blesession/
   link.py           LinkInfo, probe_link(), connected_via(), is_proxy()
   attempts.py       Attempt, run_attempts() — the lock/attempt contract
   causes.py         cause_key() and the CAUSES table it names
-  report.py         build_report(), report_attempt(), SessionReports
+  report.py         build_report(), report_attempt(), fallback_report(), classify(), SessionReports
   const.py          option keys and defaults
   hass.py           ble_device_or_raise(), radio_facts() — homeassistant, lazily
   testing.py        FakeClient, FakeDevice, fake_connect() for integration tests
@@ -426,14 +426,20 @@ attempt that failed and a second that worked — exactly the intermittent
 failure the second slot exists to keep. `on_attempt` sees every attempt,
 including one a `guard` declined, so the rule above holds for whichever
 slot each one belongs in. Filing the returned attempt is right only when
-`last_failure` should mean "the last session that failed overall" rather
-than "the last attempt that failed".
+`last_failure` should mean "the last session that failed overall" — but
+since 0.9 that is what `last_failure` already means: a failed attempt that is
+about to be retried (`Attempt.retrying`) goes to `last_retry`, so a retry that
+went on to succeed is kept as evidence without counting as a failure.
 
 - **last session** — the most recent, success or failure, on the
   duration/timestamp sensor's attributes
 - **last failure** — kept until the next failure, so a success does not
   erase the evidence: the user who comes to read it has usually had a
-  working session since
+  working session since; `failures` and `last_failure_at` count them
+- **last retry** — a failed attempt another attempt followed, kept as
+  evidence of an intermittent fault; not a failure
+- **`of(operation)`** — the latest report of one operation, for a sensor that
+  must not be overwritten by another kind of session
 
 A session a `guard` declined is `last` but not `last_failure`. Nothing was
 tried, so it must not overwrite the last real failure with "the write lock

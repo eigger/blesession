@@ -108,8 +108,9 @@ class AcmeTag:
 
         def file_it(attempt):
             # Every attempt, not just the last one run_attempts() returns:
-            # a first attempt that failed and a second that worked is
-            # exactly what `last_failure` is for.
+            # a first attempt that failed and a second that worked is kept
+            # in `last_retry`; `last_failure` and `failures` count only a
+            # failure no further attempt follows.
             self.reports.record(
                 report_attempt(
                     attempt,
@@ -426,7 +427,9 @@ in this repo is a working example.
    `except ConnectionError` maps them all; set `retryable=False` on the ones a
    retry cannot fix.
 6. Record every attempt into `SessionReports` from `on_attempt`, and
-   publish `last` and `last_failure`.
+   publish `last`, `last_failure` (with `failures` / `last_failure_at`) and,
+   if you want the evidence of a retried fault, `last_retry`; leave out a
+   cancelled session and an expected failure (a device asleep).
 7. Write the device sentences you have as a `cause(failure)` callback — an
    empty one is fine to start with — testing `failure.exc`'s type.
 8. Look up characteristics with `characteristic_or_raise()` and write payloads
