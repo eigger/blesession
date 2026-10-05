@@ -223,7 +223,8 @@ def build_report(
     reads it to tell a failure being retried from the final one.
 
     A `cause` callback that raises does not fail the report: the error is
-    logged at debug and the generic sentence is used.
+    logged as a warning once per callback (debug after that) and the generic
+    sentence is used. A `Warning` it raises is not swallowed.
     """
     facts = dict(facts or {})
     report: dict[str, Any] = {
@@ -404,6 +405,9 @@ class SessionReports:
     Every kind becomes `last`. `last_failure` is kept until the next failure —
     a success must not erase the evidence, because the user who comes to
     read it at 3 am has usually had a working session since.
+
+    A `SessionReports` is not meant to be copied: a copy shares the per-operation
+    dict and the listeners with the original.
 
     Whether a session belongs in the reports at all is the integration's call,
     and it is made by not calling `record`: a cancelled session is not an

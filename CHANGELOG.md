@@ -44,8 +44,10 @@ per-operation slot and the listeners every integration wrote by hand, and
 - `retry_if`'s side effects (for example a counter in `Attempt.state`) are now
   visible to `on_attempt`, which runs after it.
 - `build_report()` no longer raises when a `cause` callback raises, and
-  `blesession.hass.radio_facts()` returns `{}` when its lookup raises; both
-  are logged at debug and the report is built with what is known.
+  `blesession.hass.radio_facts()` returns `{}` when its lookup raises. The
+  callback's exception is logged as a warning once per callback (a `Warning` it
+  raises is re-raised); the lookup's at debug; the report is built with what is
+  known.
 - `SessionReports.clear()` also resets the counters and `last_failure_at`.
 
 ## [0.8.0] — 2026-10-04

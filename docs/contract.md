@@ -242,11 +242,11 @@ A key is added without notice; one is renamed, removed or changes meaning
 only per §1.
 
 A report never fails to build because of its diagnostics: a `cause` callback
-that raises is logged at debug and the generic sentence is used, and
-`blesession.hass.radio_facts()` returns `{}` (logged at debug) when the adapter
-or scanner lookup raises (including Home Assistant being absent). A `cause`
-callback's exception is logged as a warning once per callback; a `Warning` it
-raises (a deprecation turned into an error) is not swallowed.
+that raises is logged as a warning once per callback (debug after that) and the
+generic sentence is used; a `Warning` it raises (a deprecation turned into an
+error) is not swallowed. `blesession.hass.radio_facts()` returns `{}` (logged at
+debug) when the adapter or scanner lookup raises (including Home Assistant being
+absent).
 
 `fallback_report(operation, *, trace=None, exc=None, attempt=None)` is the
 report for when building one failed anyway: outcome, `error`, the failed stage,
