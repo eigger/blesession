@@ -13,6 +13,14 @@ so any change to them is at least a minor bump and is listed here.
 
 ## [Unreleased]
 
+### Added
+
+- English and Korean user guides for Bluetooth proxy setup and common
+  troubleshooting, including device recommendations, failure-stage and route
+  interpretation, safe recovery and sanitized diagnostics. These guides also
+  support integrations that do not use the library; no runtime, dependency,
+  version or release-policy changes are included.
+
 ## [0.9.0] — 2026-10-05
 
 `SessionReports` takes over the failure count, the failure time, the
