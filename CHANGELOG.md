@@ -32,8 +32,9 @@ so any change to them is at least a minor bump and is listed here.
   when the backend reported the ATT MTU. It is read at the end of the session,
   before the close, because right after connecting BlueZ still answers a
   placeholder. Before, there was no `mtu` key unless the integration noted
-  one. The key comes last among the trace facts, after the integration's own
-  `note()` facts.
+  one. The key is added after the integration's own `note()` facts; an
+  integration that already notes `mtu` keeps its key position and gets the
+  end-of-session value.
 
 ## [0.9.1] — 2026-11-01
 
