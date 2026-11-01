@@ -143,6 +143,14 @@ Read it when the transfer starts, not right after connecting. Protocol
 overhead, caps and minimums stay the integration's. `limit.facts()` gives the
 `mtu`, `write_size` and `write_size_source` facts for `trace.note()`.
 
+The session notes `mtu` by itself, but only when the backend reports one, and
+a local BlueZ adapter often does not (nothing acquires the MTU). The
+characteristic's write size is real there, so an integration that wants the
+size on its sensors on every route calls
+`trace.note(**write_limit(client, char, default=SAFE_CHUNK).facts())` when its
+transfer starts; `default` is the integration's own known-good size for a link
+that reports nothing. `mtu` is never guessed from a write size.
+
 ### 3.5 `run_attempts(attempt_fn, *, lock, max_attempts, attempt_timeout_s, pause_s, retry_if, guard, on_attempt, stage_map, name)`
 
 - The lock is held for **one attempt**; between attempts it is released.

@@ -23,7 +23,8 @@ so any change to them is at least a minor bump and is listed here.
   else `default`, with `source` saying which. BlueZ's warned placeholder MTU is
   not treated as reported. `WriteLimit.facts()` gives `mtu`, `write_size` and
   `write_size_source` for `trace.note()`. Integrations each computed this by
-  hand with different fallbacks.
+  hand with different fallbacks. It is opt-in: nothing changes for an
+  integration that does not call it.
 - `FakeClient.mtu_size` (default 247).
 
 ### Changed
