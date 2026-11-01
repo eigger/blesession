@@ -147,9 +147,10 @@ Rules, all of which at least one integration currently gets differently:
   ```
 
   A handle that went stale is ignored and a fresh link opened, so the
-  caller never checks — and if that handle is somehow still open, it is
-  closed first, under the disconnect bound, rather than abandoned holding
-  a proxy slot the caller no longer has a reference to. A reused link times no `connect` stage — there was
+  caller never checks — and that handle is
+  closed first, under the disconnect bound, even if it reports itself down,
+  rather than abandoned holding a proxy slot the caller no longer has a
+  reference to. A reused link times no `connect` stage — there was
   nothing to connect — and the trace notes `reused=True`, so a missing
   `connect_s` reads as "there was none" rather than as a measurement that
   went missing. It keeps the drop watch it already had. `settle_s`,

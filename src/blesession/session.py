@@ -149,11 +149,11 @@ async def ble_session(
     address = ble_device.address
     reused = client if still_up(client) else None
     handed_off = False
-    # A handle `still_up` turned down but that is somehow still open is this
-    # function's to close, not the caller's: they are about to overwrite
-    # their reference with the client we hand back, and an abandoned link
-    # holds a proxy's connection slot until something else notices.
-    turned_down = client if reused is None and client is not None and client.is_connected else None
+    # A handle `still_up` turned down is this function's to close, not the
+    # caller's, whatever its `is_connected` says: they are about to overwrite
+    # their reference with the client we hand back, and a link a proxy still
+    # holds keeps its connection slot until something releases it.
+    turned_down = client if reused is None and client is not None else None
     client = reused
     dropped = asyncio.Event()
     caller_callback: Callable[[Any], None] | None = connect_kwargs.pop(
@@ -206,7 +206,14 @@ async def ble_session(
         # `keep` transfers ownership only after the context yields the client.
         # A connect/settle failure before that point must not strand a link the
         # caller never received.
-        if client is not None and (not keep or not handed_off) and client.is_connected:
+        #
+        # The close is sent whatever `is_connected` says. A backend marks the
+        # client disconnected as soon as an operation fails with "Not
+        # connected", but a Bluetooth proxy may still hold the link, and only a
+        # disconnect request releases its connection slot. Closing a client that
+        # is already down is a no-op on the other backends, and `_close` is
+        # bounded and never raises.
+        if client is not None and (not keep or not handed_off):
             with trace.timed(stages.DISCONNECT):
                 await _close(client, disconnect_timeout_s, address, trace, "disconnect")
 

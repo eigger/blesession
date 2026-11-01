@@ -352,7 +352,7 @@ async with ble_session(device, client=self._client, keep=self._keep) as client:
 ```
 
 A handle that went stale is ignored and a fresh link opened, so you never
-check — and if it is somehow still open, the session closes it rather than
+check — and the session closes it, even if it reports itself down, rather than
 leaving it holding a proxy slot. A reused link times no `connect` stage
 and the trace notes `reused=True`.
 
