@@ -831,3 +831,19 @@ async def test_write_chunks_writes_nothing_on_a_link_that_is_already_down(client
         with pytest.raises(SessionDropped):
             await write_chunks(c, "w", b"abcd", 2, step="transfer")
     assert c.writes == []
+
+
+async def test_the_mtu_is_noted_at_the_end_of_the_session(client):
+    client.mtu_size = 185
+    trace = SessionTrace()
+    async with ble_session(FakeDevice(), trace=trace):
+        client.mtu_size = 247  # negotiated after connecting
+    assert trace.facts["mtu"] == 247
+
+
+async def test_no_mtu_is_noted_when_the_backend_has_none(client):
+    client.mtu_size = None
+    trace = SessionTrace()
+    async with ble_session(FakeDevice(), trace=trace):
+        pass
+    assert "mtu" not in trace.facts

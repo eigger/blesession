@@ -13,6 +13,28 @@ so any change to them is at least a minor bump and is listed here.
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-11-01
+
+### Added
+
+- `write_limit(client, char=None, *, response=False, default=20)` and
+  `WriteLimit(size, mtu, source)`: the payload one write can carry, taken from
+  the characteristic's limit, else the reported MTU less the 3-byte ATT header,
+  else `default`, with `source` saying which. BlueZ's warned placeholder MTU is
+  not treated as reported. `WriteLimit.facts()` gives `mtu`, `write_size` and
+  `write_size_source` for `trace.note()`. Integrations each computed this by
+  hand with different fallbacks.
+- `FakeClient.mtu_size` (default 247).
+
+### Changed
+
+- Every report from a session that reached its block now carries an `mtu` fact
+  when the backend reported the ATT MTU. It is read at the end of the session,
+  before the close, because right after connecting BlueZ still answers a
+  placeholder. Before, there was no `mtu` key unless the integration noted
+  one. The key comes last among the trace facts, after the integration's own
+  `note()` facts.
+
 ## [0.9.1] — 2026-11-01
 
 ### Added

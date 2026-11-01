@@ -77,6 +77,8 @@ class FakeClient:
         self.write_delay_s: float = 0.0
         """A write that takes this long (use a large value for one that hangs)."""
         self.services = FakeServices()
+        self.mtu_size: int = 247
+        """The ATT MTU a real client reports; set it to see `write_limit()` use it."""
         self.disconnected_callback: Callable[[Any], None] | None = None
         """Set by fake_connect(); fired by drop() and disconnect(), as bleak does."""
         self._pending: list[bytes] = []

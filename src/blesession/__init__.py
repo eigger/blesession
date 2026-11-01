@@ -28,7 +28,7 @@ from .errors import (
     WriteTimeout,
     error_text,
 )
-from .gatt import characteristic_or_raise
+from .gatt import WriteLimit, characteristic_or_raise, write_limit
 from .link import LinkInfo, connected_via, is_proxy, probe_link
 from .notifications import Notifications
 from .report import (
@@ -53,7 +53,7 @@ from .subscribe import (
 from .trace import SessionTrace, traced
 from .transfer import WRITE_TIMEOUT_S, guarded_write, write_chunks
 
-__version__ = "0.9.1"
+__version__ = "0.10.0"
 """The one place the version is written; pyproject.toml reads it."""
 
 __all__ = [
@@ -80,6 +80,7 @@ __all__ = [
     "SessionTrace",
     "Unreachable",
     "WRITE_TIMEOUT_S",
+    "WriteLimit",
     "WriteTimeout",
     "ble_session",
     "build_report",
@@ -104,4 +105,5 @@ __all__ = [
     "still_up",
     "traced",
     "write_chunks",
+    "write_limit",
 ]

@@ -142,6 +142,7 @@ async def test_report_order_and_cause_precedence(monkeypatch, no_sleep):
         "session_s",
         "disconnect_s",
         "parts",
+        "mtu",
     ]
     assert report["failed_stage"] == "auth" and report["failed_detail"] == "start"
     assert report["likely_cause"] == "rejected: not a WOLINK tag"
