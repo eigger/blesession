@@ -53,7 +53,7 @@ from .subscribe import (
 from .trace import SessionTrace, traced
 from .transfer import WRITE_TIMEOUT_S, guarded_write, write_chunks
 
-__version__ = "0.9.0"
+__version__ = "0.9.1"
 """The one place the version is written; pyproject.toml reads it."""
 
 __all__ = [

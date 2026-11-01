@@ -13,6 +13,18 @@ so any change to them is at least a minor bump and is listed here.
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-11-01
+
+### Fixed
+
+- `ble_session()` now sends the disconnect even when the client already
+  reports itself disconnected, both when closing the session and when
+  releasing a handle passed in with `client=`. After a GATT "Not connected"
+  error a backend marks the client down at once, so the old `is_connected`
+  guard skipped the close and a Bluetooth proxy could keep holding the
+  printer's connection slot. The close is bounded and never raises, and
+  closing a client that is already down is a no-op on the other backends.
+
 ### Added
 
 - English and Korean user guides for Bluetooth proxy setup and common

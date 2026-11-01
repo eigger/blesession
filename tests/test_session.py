@@ -120,7 +120,8 @@ async def test_settle_drop_is_connect_failed_with_settle_detail(client):
         async with ble_session(FakeDevice(), settle_s=1.0):
             pass
     assert info.value.detail == "settle"
-    assert client.disconnects == 0  # nothing to disconnect
+    # The backend says the link is down, but a proxy may still hold it.
+    assert client.disconnects == 1
 
 
 async def test_keep_does_not_strand_a_link_when_settle_times_out(client):
@@ -279,7 +280,27 @@ async def test_dropping_an_already_dropped_link_does_nothing(client):
         c.drop()
         c.drop()
     assert fired == [client]
-    assert client.disconnects == 0  # nothing left to disconnect
+    assert client.disconnects == 1  # the close is sent even though the link dropped
+    assert fired == [client]  # and the callback is not fired a second time
+
+
+async def test_a_link_that_dropped_mid_session_is_still_closed(client):
+    """A proxy can keep the slot after the client reports "Not connected"."""
+    with pytest.raises(RuntimeError):
+        async with ble_session(FakeDevice()) as c:
+            c.drop()
+            raise RuntimeError("Not connected")
+    assert client.disconnects == 1
+
+
+async def test_a_failing_close_after_a_drop_does_not_mask_the_error(client):
+    trace = SessionTrace()
+    with pytest.raises(RuntimeError, match="Not connected"):
+        async with ble_session(FakeDevice(), trace=trace) as c:
+            c.drop()
+            c.fail_disconnect = OSError("proxy timed out")
+            raise RuntimeError("Not connected")
+    assert trace.facts["disconnect_error"] == "proxy timed out"
 
 
 async def test_a_link_left_up_carries_the_next_session(client):
@@ -407,7 +428,7 @@ async def test_an_already_dropped_handle_has_nothing_to_close(monkeypatch):
 
     async with ble_session(FakeDevice(), client=first, keep=True) as reused:
         assert reused is second
-    assert first.disconnects == 0
+    assert first.disconnects == 1  # a dropped handle is still released
 
 
 async def test_a_reply_arriving_while_waiting_beside_a_watch_is_returned(client):
