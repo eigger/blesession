@@ -15,6 +15,14 @@ so any change to them is at least a minor bump and is listed here.
 
 ## [0.9.1] — 2026-11-01
 
+### Added
+
+- English and Korean user guides for Bluetooth proxy setup and common
+  troubleshooting, including device recommendations, failure-stage and route
+  interpretation, safe recovery and sanitized diagnostics. These guides also
+  support integrations that do not use the library; no runtime, dependency,
+  version or release-policy changes are included.
+
 ### Fixed
 
 - `ble_session()` now sends the disconnect even when the client already
@@ -24,14 +32,6 @@ so any change to them is at least a minor bump and is listed here.
   guard skipped the close and a Bluetooth proxy could keep holding the
   printer's connection slot. The close is bounded and never raises, and
   closing a client that is already down is a no-op on the other backends.
-
-### Added
-
-- English and Korean user guides for Bluetooth proxy setup and common
-  troubleshooting, including device recommendations, failure-stage and route
-  interpretation, safe recovery and sanitized diagnostics. These guides also
-  support integrations that do not use the library; no runtime, dependency,
-  version or release-policy changes are included.
 
 ## [0.9.0] — 2026-10-05
 

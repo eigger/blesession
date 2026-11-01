@@ -149,10 +149,10 @@ async def ble_session(
     address = ble_device.address
     reused = client if still_up(client) else None
     handed_off = False
-    # A handle `still_up` turned down but that is somehow still open is this
-    # function's to close, not the caller's: they are about to overwrite
-    # their reference with the client we hand back, and an abandoned link
-    # holds a proxy's connection slot until something else notices.
+    # A handle `still_up` turned down is this function's to close, not the
+    # caller's, whatever its `is_connected` says: they are about to overwrite
+    # their reference with the client we hand back, and a link a proxy still
+    # holds keeps its connection slot until something releases it.
     turned_down = client if reused is None and client is not None else None
     client = reused
     dropped = asyncio.Event()

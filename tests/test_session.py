@@ -420,7 +420,7 @@ async def test_closing_a_turned_down_handle_cannot_fail_the_session(monkeypatch)
     assert trace.failed_stage is None  # a close that failed is not the session failing
 
 
-async def test_an_already_dropped_handle_has_nothing_to_close(monkeypatch):
+async def test_an_already_dropped_handle_is_still_released(monkeypatch):
     first, second = _two_links(monkeypatch)
     async with ble_session(FakeDevice(), keep=True):
         pass
