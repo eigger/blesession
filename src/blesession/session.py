@@ -17,6 +17,7 @@ from bleak_retry_connector import close_stale_connections_by_address, establish_
 
 from . import stages
 from .errors import ConnectFailed, error_text
+from .gatt import _reported_mtu
 from .link import probe_link
 from .trace import SessionTrace
 
@@ -213,6 +214,11 @@ async def ble_session(
         # disconnect request releases its connection slot. Closing a client that
         # is already down is a no-op on the other backends, and `_close` is
         # bounded and never raises.
+        if client is not None and handed_off and (mtu := _reported_mtu(client)) is not None:
+            # Read now, after the work and before the close: right after
+            # connecting BlueZ still answers a placeholder. A drop leaves the
+            # last value the backend kept, or none.
+            trace.note(mtu=mtu)
         if client is not None and (not keep or not handed_off):
             with trace.timed(stages.DISCONNECT):
                 await _close(client, disconnect_timeout_s, address, trace, "disconnect")

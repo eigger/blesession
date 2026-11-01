@@ -36,6 +36,7 @@ behaviour is.
 | `write_chunks` | Helper | a payload as consecutive writes (§3.3) |
 | `guarded_write` | Helper | one write with the drop check and the bound; what `request()` and `write_chunks()` use (§3.3) |
 | `WRITE_TIMEOUT_S` | Helper | the default bound on one write (10 s) |
+| `write_limit`, `WriteLimit` | Helper | the payload one write can carry, and where that figure came from (§3.4) |
 | `characteristic_or_raise` | Helper | the service/characteristic lookup, with required properties and write size (§3.4) |
 | `start_notify_with_recovery` | Helper | subscribe, releasing a subscription the last link left behind |
 | `stop_notify_best_effort` | Helper | unsubscribe in cleanup: skipped on a dead link, bounded, never raises |
@@ -130,6 +131,25 @@ size and a failed lookup are raised `retryable=True`, because a write size read
 right after connecting can be bleak's 20-byte default until the MTU is known
 and services may not be discovered yet. Check the size once the link has
 settled.
+
+`write_limit(client, char=None, *, response=False, default=20)` returns a
+`WriteLimit(size, mtu, source)`. Without response the characteristic's own
+limit wins when it is above the 20-byte floor; at or below it (bleak's
+placeholder until the MTU is known) the reported MTU less the 3-byte ATT header
+is used. With response the MTU less the header is used. Where nothing real was
+reported, `size` is `default` and `source` is `"default"`; `mtu` is set only
+when the backend reported one, and BlueZ's warned placeholder does not count.
+Read it when the transfer starts, not right after connecting. Protocol
+overhead, caps and minimums stay the integration's. `limit.facts()` gives the
+`mtu`, `write_size` and `write_size_source` facts for `trace.note()`.
+
+The session notes `mtu` by itself, but only when the backend reports one, and
+a local BlueZ adapter often does not (nothing acquires the MTU). The
+characteristic's write size is real there, so an integration that wants the
+size on its sensors on every route calls
+`trace.note(**write_limit(client, char, default=SAFE_CHUNK).facts())` when its
+transfer starts; `default` is the integration's own known-good size for a link
+that reports nothing. `mtu` is never guessed from a write size.
 
 ### 3.5 `run_attempts(attempt_fn, *, lock, max_attempts, attempt_timeout_s, pause_s, retry_if, guard, on_attempt, stage_map, name)`
 
@@ -235,6 +255,7 @@ trace's `note()` facts. Everything a session can put on a sensor:
 | `retrying` | a failed attempt another follows | `True`; absent otherwise (§6.1) |
 | `via`, `via_type`, `rssi`, `paths`, `advertised_via`, `via_unconfirmed` | radio known | `FACT_KEYS`, from `radio_facts()` |
 | `<stage>_s` | timed | seconds, in the order stages finished |
+| `mtu` | the backend reported one | the ATT MTU, read at the end of the session, before the close (a placeholder such as BlueZ's warned default is left out) |
 | `reused`, `disconnect_error`, `stale_close_error` | when they happen | `keep`/`client=` reuse; a close that failed |
 | your `note()` facts | always | anything scalar |
 

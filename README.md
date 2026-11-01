@@ -54,6 +54,7 @@ Requires Python 3.13+. The core depends only on bleak / bleak-retry-connector;
 | `Notifications` | queued replies from one characteristic; every wait names its `step` and ends the moment the link drops; `request()` is write-then-reply |
 | `write_chunks()` / `guarded_write()` | a payload as consecutive writes; every write is bounded and a dropped link ends it as `SessionDropped` |
 | `characteristic_or_raise()` | the service/characteristic lookup with required properties and write size, or `GattMismatch` |
+| `write_limit()` | the payload one write can carry (characteristic limit, else MTU less the ATT header, else your default) and which of the three it was |
 | `SessionTrace` | nested stage timings; the innermost stage an exception escaped from |
 | stage vocabulary | `unreachable · connect · session · auth · transfer · finish · disconnect`, plus a device `detail` |
 | `run_attempts()` | the lock-per-attempt / fresh-handle-per-attempt contract; policy stays yours |
