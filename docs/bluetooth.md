@@ -20,7 +20,7 @@ For example, place a proxy near an entrance sensor that is too far from the serv
 
 You can add proxies in rooms with poor reception. Each uses your existing home network; they do not form a Bluetooth mesh between proxies. Several proxies can receive the same sensor’s advertisements, and Home Assistant brings the information together. Reception and a working connection are different, so verify an actual device operation after adding a proxy.
 
-For a first installation, follow **choose hardware → install firmware → register in Home Assistant → check the device**. For an existing installation, see [updates](#updates) and [configuration changes](#configuration-changes).
+For a first installation, follow **choose hardware → install firmware → register in Home Assistant → check the device**.
 
 ## 1. Choose a proxy
 
@@ -159,59 +159,3 @@ Add it directly on the left, or choose Skip and add the discovered entry under *
 Place the proxy near the BLE device, with stable power and network access. Wake the BLE device using its model’s instructions, then add/use its integration in Home Assistant. Close another phone app or gateway connection if the device allows only one connection.
 
 Confirm that the expected entity updates or device command completes. Merely seeing a Bluetooth advertisement does not prove a read/write connection works. Integrations that connect to devices need `bluetooth_proxy.active: true` (GATT support). Tracker **active scanning** requests extra discovery data and is a separate setting; passive scanning does not itself prevent GATT connections. Keep scan timing and connection limits at their defaults initially. See [ESPHome proxy settings](https://esphome.io/components/bluetooth_proxy/) and [BLE scanning](https://esphome.io/components/esp32_ble_tracker/).
-
-<a id="updates"></a>
-
-## 5. Update firmware
-
-Home Assistant, ESPHome Device Builder and the firmware installed on the board are separate updates. Updating Device Builder still requires building and installing firmware to change the board.
-
-1. Privately back up the working YAML, `secrets.yaml`, API key and existing OTA credentials. Record the board/revision and installed ESPHome version.
-2. For a web-installed proxy, first use Device Builder’s **Take control / Adopt** feature on the discovered device; wording varies by version. Registration in the Home Assistant ESPHome integration is separate from managing YAML in Device Builder. If no entry appears, check the board’s official project configuration and import support. Do not replace XIAO Ethernet configuration with the AtomS3U Wi-Fi example.
-3. Review the target ESPHome release notes and **Validate** the configuration. Resolve errors, then choose **Install → Wirelessly** or the equivalent network route. OTA installs over Wi-Fi/Ethernet without USB; it requires OTA support in the running firmware and network access from Device Builder to the board.
-4. Keep power connected. After reboot, check network/API logs, Home Assistant’s ESPHome connection and a real BLE operation. Update multiple proxies one at a time.
-
-For upload failures, check the address, network and existing OTA credentials first. The Home Assistant API key and an OTA password are not necessarily the same. Current ESPHome also supports OTA encryption using the API key; existing firmware may need a staged migration. Follow the [official OTA instructions](https://esphome.io/components/ota/esphome/). The minimal YAML above does not require OTA encryption.
-
-<a id="configuration-changes"></a>
-
-## 6. Change settings and recover
-
-Open the board’s YAML in Device Builder, change the needed setting, then **Validate → Install → verify operation**. Saving an edit alone does not change the board. Keep the working configuration and change one thing at a time.
-
-| Setting | What to change and check |
-|---|---|
-| Wi-Fi SSID/password | Edit the secrets referenced by `wifi`. Install while the old network still works, then check the new IP after reboot. If the old network is already unavailable, recover over USB. |
-| Display name | Edit `friendly_name` and install. Changing `esphome.name` also affects the hostname; treat that as a separate change. |
-| IP/network | Consider a router DHCP reservation first. After an address change, verify access and Home Assistant connectivity. Preserve board-specific Ethernet pin settings. |
-| API key/OTA authentication | Retain the current values and follow the official procedure for that authentication method. An API key change may require Home Assistant reconfiguration. Changing or losing an encrypted OTA key may require USB recovery. |
-| BLE connection support | Keep `bluetooth_proxy.active: true` for integrations that connect to devices. Adjust scan timing or slots only when diagnosing a demonstrated need. |
-
-If the board repeatedly reboots after an update, inspect logs. If network/OTA still works, rebuild and install the working configuration. ESPHome [Safe Mode](https://esphome.io/components/safe_mode/) can help with recovery uploads but cannot recover every failure. If networking fails or credentials are lost, connect USB, enter the board’s download mode and reinstall firmware for the **exact board**. Do not erase everything as the first step; settings may be lost. Recheck networking and Home Assistant afterward.
-
-<a id="troubleshooting"></a>
-
-## Troubleshooting
-
-Use [common Bluetooth troubleshooting](troubleshooting.md) for stage diagnostics, route interpretation and recovery order, alongside the quick checks below and your device’s guide.
-
-| Symptom | What to try |
-|---|---|
-| Proxy offline in Home Assistant | Check power and network first. For XIAO Ethernet firmware, connect Ethernet. Recheck its IP address/API key and ESPHome logs. |
-| BLE device not discovered (`unreachable`) | Check battery/power, wake the device and move it close to the proxy. Follow the model’s pairing/discovery instructions. |
-| Device found, connection fails (`connect`) | Check GATT support, close other connected apps/gateways, and follow the model’s authentication requirements. Discovery alone does not confirm a connection. |
-| No connection slot (`connect.no_slot`) | Stop overlapping operations or unused long-lived connections. If needed, spread devices across another proxy. |
-| Authentication/session fails | Check the exact model/firmware and required keys or pairing. Repeated retries do not correct a wrong key or unsupported model. |
-| Transfer disconnects (`link_lost`) | Check device battery, proxy power/network and distance at the failure time. Restore the connection before retrying. |
-| A write hangs (`write_timeout`) | Check proxy responsiveness and connection load. Restore the affected proxy/device, then follow the integration’s retry instructions. |
-| No completion confirmation | Check whether the device already performed the operation before sending it again, especially for commands with physical effects. |
-
-Error names and available diagnostics vary by integration. Use its own troubleshooting guide for model-specific steps, retry controls and logs. A proxy has finite connection capacity; increasing retries or scan intensity is not a general fix. Keep it close to the BLE device and away from network equipment or metal enclosures that interfere with reception.
-
-### Reporting a problem
-
-Include Home Assistant, integration and ESPHome versions; proxy/device model and revision; network method; failure time; and steps to reproduce. Include whether discovery works and whether the actual operation succeeds. If the integration offers diagnostics or debug logging, follow its instructions, collect the failing interval, then disable debug logging. A strong advertisement signal is not proof of which proxy handled the connection.
-
-Before posting files publicly, remove Bluetooth/MAC addresses, authentication keys, tokens, internal addresses and personal measurements or names. Compare a successful attempt with the failed one when possible.
-
-Official instructions checked **2026-11-13**. This documentation update did not include physical installation or OTA testing.
