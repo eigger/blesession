@@ -21,7 +21,7 @@ retry.
 
 ```json
 {
-  "requirements": ["blesession==0.7.0"]
+  "requirements": ["blesession==0.10.0"]
 }
 ```
 
@@ -217,7 +217,8 @@ call here, and the contract says exactly what it guarantees:
 | an `Event` or `Future` per reply | `Notifications.next` / `wait_for` | a reply that lands between two waits is kept; a wait ends the moment the link drops |
 | clear the reply, write, wait | `Notifications.request()` | one call; stale replies cannot answer this request; the write is bounded |
 | a loop slicing a payload into writes | `write_chunks()` | each write is bounded and a dropped link ends it as `SessionDropped`; `on_chunk` keeps the progress for the trace |
-| `get_service` / `get_characteristic` checks | `characteristic_or_raise()` | one error, `GattMismatch`, with its own failure sentence and no retry |
+| `get_service` / `get_characteristic` checks | `characteristic_or_raise()` | one error, `GattMismatch`; missing profiles are final, while a small write size or failed lookup may be retried |
+| choosing a write size from MTU/backend details | `write_limit()` | characteristic limit, reported MTU or your fallback, with the source recorded |
 | `except` + `"timeout" in str(err)` to pick a message | `isinstance(failure.exc, ...)` in `cause` | survives a reworded message |
 | a retry loop with a lock held throughout | `run_attempts()` | the lock is held for one attempt; every attempt is bounded |
 | `if device is None` | `ble_device_or_raise()` | "asleep" arrives as `Unreachable`, with a stage and a cause |
@@ -243,11 +244,12 @@ Everything a session can put on a sensor, in the order it appears:
 | `failed_detail` | failure | *your* stage name, when it differs (`unlock`) |
 | `likely_cause` | usually | one sentence: yours first, then the generic one |
 | `likely_cause_key` | generic sentences | the stable name (`connect.no_slot`), for a translation |
-| `timed_out` | attempt bound fired | the transport died, not the device (with `failed_stage=disconnect`: the close hung, the work was done) |
+| `timed_out` | attempt bound fired | the attempt exceeded its deadline; not proof of a specific fault (with `failed_stage=disconnect`: the bound fired during cleanup) |
 | `attempt` / `attempts` | via `report_attempt` | which try, out of how many |
+| `retrying` | another attempt follows a failure | `True`; absent otherwise |
 | `via` / `via_type` | radio known | the radio the link **took**, `proxy` or `adapter` |
 | `rssi` | radio known | as that radio saw the device |
-| `paths` | always with facts | connectable radios that see it; `1` means no failover |
+| `paths` | radio lookup succeeds | connectable radios currently seeing it; `1` means no alternate visible route, not a count of free slots |
 | `advertised_via` | only when it differs | the loudest scanner, when the link took another |
 | `via_unconfirmed` | `via` not resolved from the link | `True`: no link (no connect, or one that failed) or a route habluetooth does not know, so `via` is only the loudest scanner |
 | `connect_s`, `session_s`, `disconnect_s` | timed | seconds, in the order stages finished |
@@ -255,6 +257,8 @@ Everything a session can put on a sensor, in the order it appears:
 | `reused` | `client=` reuse | the link was already up; there was no connect |
 | `disconnect_error` | close failed | the work was done; only the close failed |
 | `stale_close_error` | rare | closing a handed-in link that had gone stale failed |
+| `mtu` | backend reported one | ATT MTU, read before the session closes; placeholders are omitted |
+| `write_size`, `write_size_source` | you note `write_limit().facts()` | available write payload size and whether it came from the characteristic, MTU or your default |
 | your `note()` facts | always | `payload_bytes=…`, pacing counters, anything scalar |
 
 A failed session at 3 am then reads off the entity without debug logging:
@@ -305,7 +309,7 @@ characteristic once the link has settled, sizes its chunks from what the link
 allows, and writes them with `write_chunks()`:
 
 ```python
-from blesession import characteristic_or_raise, write_chunks
+from blesession import characteristic_or_raise, write_chunks, write_limit
 
 HEADER = 4  # this protocol prefixes each chunk with its 4-byte offset
 
@@ -320,7 +324,9 @@ async with ble_session(device, trace=trace, settle_s=0.5) as client:
     )
     # `size` is the data in a chunk; `wrap` adds the header, so the write is
     # `size + HEADER` and must still fit what the link allows.
-    size = min(MAX_CHUNK, char.max_write_without_response_size - HEADER)
+    limit = write_limit(client, char)
+    trace.note(**limit.facts())
+    size = min(MAX_CHUNK, limit.size - HEADER)
     with trace.timed("transfer"):
         await write_chunks(
             client, char, payload, size,
@@ -333,7 +339,8 @@ async with ble_session(device, trace=trace, settle_s=0.5) as client:
 
 `settle_s` comes first because the write size is bleak's 20-byte default
 until the MTU is known. A device without the characteristic ends the attempt
-as `GattMismatch` with its own failure sentence, and is not retried; each
+as a final `GattMismatch` with its own failure sentence. A too-small write
+size or failed lookup is retryable because discovery may still be settling; each
 write is bounded (`WriteTimeout`) and a dropped link ends the transfer as
 `SessionDropped`.
 

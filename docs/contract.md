@@ -4,7 +4,7 @@ What an integration may rely on, and what it must provide in return. Read
 this and [`adopting.md`](adopting.md) and you can integrate a device without
 reading the source; [`design.md`](design.md) is the *why*.
 
-Everything here is checked by `tests/test_docs_contract.py`: a name in
+Public-name coverage is checked by `tests/test_docs_contract.py`: a name in
 `blesession.__all__`, a stage, an error class, a report key or a cause key
 that this page does not mention fails the build. A contract that drifts from
 the code is worse than none.
@@ -20,7 +20,7 @@ the code is worse than none.
 **Deprecation.** A shape that was in a release is removed only after a minor
 release that still accepts it and raises `DeprecationWarning`. The older
 `cause` shapes (§7) are the current example: accepted in 0.7, removed in 1.0.
-Pin exactly in `manifest.json` (`blesession==0.7.0`); a bump is then a
+Pin exactly in `manifest.json` (`blesession==0.10.0`); a bump is then a
 reviewed change, and the CHANGELOG says what it touches.
 
 ## 2. Public names
@@ -125,8 +125,8 @@ transfer that later fails. An empty `data` writes nothing.
 
 Returns the characteristic or raises `GattMismatch` (stage `session`): the
 service or characteristic is missing, a required property is absent, the write
-size is too small, or the lookup itself failed. The first three are final
-(`retryable=False`: the device will not grow the profile); a too-small write
+size is too small, or the lookup itself failed. A missing service,
+characteristic or required property is final (`retryable=False`); a too-small write
 size and a failed lookup are raised `retryable=True`, because a write size read
 right after connecting can be bleak's 20-byte default until the MTU is known
 and services may not be discovered yet. Check the size once the link has
@@ -157,7 +157,7 @@ that reports nothing. `mtu` is never guessed from a write size.
 - Every attempt is bounded, connecting included, **when you pass
   `attempt_timeout_s`** (the default `None` is no bound: always pass one). A
   bound that fires is `AttemptTimedOut` and `timed_out=True`; it is not
-  retried by default (the transport is dead, not the device unwilling).
+  retried by default; a deadline alone does not identify the faulty component.
 - `guard` runs under the lock before the attempt and may decline it
   (`skipped`); `on_attempt` sees every attempt, including declined ones.
 - `Attempt.retrying` says whether another attempt follows. The loop sets it
@@ -166,7 +166,8 @@ that reports nothing. `mtu` is never guessed from a write size.
   before `on_attempt`; an attempt whose `retry_if` raised is not handed to
   `on_attempt`. An `Attempt` built by hand has `retrying=False`.
 - It never raises for a failed attempt: the returned `Attempt` carries the
-  outcome.
+  outcome. Cancellation and exceptions from `guard`, `retry_if` or
+  `on_attempt` propagate; they are not recorded as attempt failures.
 
 **The integration's side:** resolve the device handle *inside* the attempt
 (`blesession.hass.ble_device_or_raise`), scope the lock (per device, entry or
@@ -250,7 +251,7 @@ trace's `note()` facts. Everything a session can put on a sensor:
 | `failed_detail` | failure | your stage name (or the wait's `step`) when it differs |
 | `likely_cause` | usually | one sentence: yours first, then the generic one |
 | `likely_cause_key` | generic sentence | its stable name (§8) |
-| `timed_out` | attempt bound fired | the transport died, not the device |
+| `timed_out` | attempt bound fired | the attempt exceeded its deadline; not proof of a specific transport or device fault |
 | `attempt`, `attempts` | via `report_attempt` | which try, out of how many |
 | `retrying` | a failed attempt another follows | `True`; absent otherwise (§6.1) |
 | `via`, `via_type`, `rssi`, `paths`, `advertised_via`, `via_unconfirmed` | radio known | `FACT_KEYS`, from `radio_facts()` |
