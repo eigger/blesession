@@ -85,14 +85,14 @@ docs/design.md          why it is shaped this way
 
 ```python
 from blesession import Notifications, SessionTrace, ble_session, build_report, stages
+from blesession.hass import radio_facts
 
 trace = SessionTrace(stage_map={"start": stages.AUTH})
 try:
     async with ble_session(ble_device, trace=trace) as client:
         async with Notifications(client, NOTIFY_UUID, settle=0.5) as replies:
             with trace.timed("start"):
-                await client.write_gatt_char(WRITE_UUID, START, response=False)
-                await replies.next(timeout=5, step="start")
+                await replies.request(WRITE_UUID, START, timeout=5, step="start")
             with trace.timed("transfer"):
                 ...
 except ConnectionError as exc:          # every session error is one

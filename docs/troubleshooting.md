@@ -2,7 +2,7 @@
 
 **English** | [한국어](troubleshooting.ko.md)
 
-Use this guide with your integration’s device-specific troubleshooting page. It covers local Bluetooth adapters and ESPHome proxies, including integrations that do not use blesession. No Python library installation is needed to follow it. Start with [proxy setup and recommended devices](bluetooth.md) if the Bluetooth route has not been configured.
+Use this guide with your integration’s device-specific troubleshooting page. It covers local Bluetooth adapters and ESPHome proxies, including integrations that do not use blesession. No Python library installation is needed to follow it. Start with the [proxy introduction and installation guide](bluetooth.md) if the Bluetooth route has not been configured.
 
 Model support, wake-up sequences, pairing, keys, safe commands and retry settings belong to the device integration. This guide does not add diagnostic entities, automatic reconnection, retries or timeout controls to an integration. Use only information and controls your installed integration actually exposes.
 

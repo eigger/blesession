@@ -58,7 +58,7 @@ blesession/
   subscribe.py      start_notify_with_recovery(), stop_notify_best_effort(),
                     NOTIFY_ATTEMPTS, STOP_NOTIFY_TIMEOUT_S
   transfer.py       guarded_write(), write_chunks()
-  gatt.py           characteristic_or_raise()
+  gatt.py           characteristic_or_raise(), write_limit(), WriteLimit
   trace.py          SessionTrace, traced()
   stages.py         the fixed stage vocabulary, primary_of()
   errors.py         BleSessionError and subclasses
@@ -261,7 +261,7 @@ Earlier timing helpers that inferred the failed stage from which keys were
 present are retired in favour of this; a transfer-specific flag becomes
 `trace.failed_stage == "transfer"`.
 
-### 5. Timeouts — three levels
+### 5. Timeouts and cleanup bounds
 
 | level        | what                                          | owner                           |
 |--------------|-----------------------------------------------|---------------------------------|
@@ -282,8 +282,8 @@ The attempt bound exists because a GATT write has no timeout of its own: a
 proxy that dies mid-transfer leaves the attempt hanging, and if it holds a
 lock, everything else hangs with it. The library wraps the attempt in
 `asyncio.timeout` and records `timed_out=True` on the report; whether a
-timed-out attempt is retried is policy (§6), with the default being *no* —
-the transport is dead, not the device unwilling.
+timed-out attempt is retried is policy (§6), with the default being *no*.
+The deadline identifies an unfinished attempt, not which component failed.
 
 ### 6. Attempts and the lock — `run_attempts()`
 
@@ -305,7 +305,7 @@ last = await run_attempts(
     max_attempts=3,
     attempt_timeout_s=600,
     pause_s=1.0,
-    retry_if=default_retry_if,  # (Attempt) -> bool; default: not timed_out
+    retry_if=default_retry_if,  # (Attempt) -> bool; excludes timed_out and retryable=False
     guard=None,                 # async () -> skip-value | None, run under the lock
     on_attempt=None,            # (Attempt) -> None, after every one — failed,
                                 # successful, or declined — outside the lock
@@ -355,10 +355,12 @@ facts = radio_facts(hass, address, trace.link)
 - `via_type` — `adapter` | `proxy`
 - `rssi` — as seen by that radio
 - `paths` — connectable radios that currently see the device; 1 means no
-  failover is possible
+  alternate visible route, not the number of free connection slots
 - `advertised_via` — the scanner whose advertisement was strongest, only
   when it is not the one the link took (a failover, or on multi-proxy
   setups the radio that holds the bond)
+- `via_unconfirmed` — true when `via` is based on an advertisement rather
+  than a scanner resolved from the actual link
 
 `link.connected_via(client)` is the single place that probes private
 attributes, in order: `client._connected_scanner` (habluetooth's wrapper),
@@ -395,8 +397,8 @@ operation, success,
 skipped,                                                         # guard declined
 error, failed_stage, failed_detail,                              # failures only
 likely_cause, likely_cause_key, timed_out,
-attempt, attempts,
-via, via_type, rssi, paths, advertised_via,
+attempt, attempts, retrying,
+via, via_type, rssi, paths, advertised_via, via_unconfirmed,
 <stage>_s ...,                                                     # run order
 <note facts> ...                            # incl. disconnect_error, if any
 ```
@@ -407,7 +409,7 @@ An attempt a `guard` declined is **not** a success: nothing was tried, so
 other way round — it does not fail the session, and is carried as the
 `disconnect_error` fact rather than being swallowed.
 
-Two sensor conventions, so troubleshooting docs can be shared across
+Three report slots, so troubleshooting docs can be shared across
 integrations, and `SessionReports` holds them:
 
 ```python
@@ -416,9 +418,10 @@ reports = SessionReports()
 def file_it(a):                       # every attempt, as it finishes
     reports.record(report_attempt(a, operation="write", attempts=3, facts=facts))
 
-last = await run_attempts(attempt, max_attempts=3, on_attempt=file_it)
+last = await run_attempts(attempt, max_attempts=3, attempt_timeout_s=60, on_attempt=file_it)
 reports.last           # on the duration / timestamp sensor
 reports.last_failure   # on the diagnostic sensor
+reports.last_retry     # a failed attempt followed by another try
 ```
 
 Record from `on_attempt`, not from what `run_attempts()` returns: it hands
@@ -558,7 +561,7 @@ roughly (see [`adopting.md`](adopting.md) for the whole thing):
 
 Around 50–80 lines beyond the protocol itself.
 
-## Rollout
+## Original rollout (historical)
 
 1. Prove the API against the integrations that already have instrumentation
    (timing helpers → `SessionTrace`, per-integration radio probes → one
@@ -605,18 +608,18 @@ fix is in `hass.py` and the stub moves with it.
   keeps working while integrations can map everything with one
   `except ConnectionError`.
 
-## Direction after 0.1
+## Current direction
 
-- **Versioning.** 0.x until a third integration is on it; integrations pin
-  an exact version in `manifest.json`. The rules (what is contract, what is
+- **Versioning.** 0.x until a third integration is on it; integrations declare
+  `"blesession"` in the `manifest.json` requirements. The rules (what is contract, what is
   a helper, what is internal-facing, and the deprecation step before a
   removal) are in [`contract.md` §1](contract.md); anything that changes a
   report key or a stage name is a minor bump and a CHANGELOG entry, because
   troubleshooting docs quote them.
-- **Shared troubleshooting doc.** Once two integrations publish the same
-  keys, one `docs/troubleshooting.md` here (with a `docs/ko/` copy)
-  explains `failed_stage` / `likely_cause` / `via` for all of them; each
-  integration's own doc links to it and adds only its device sentences.
+- **Shared user guides.** The [proxy introduction and installation guide](bluetooth.md)
+  ([한국어](bluetooth.ko.md)) and [common troubleshooting guide](troubleshooting.md)
+  ([한국어](troubleshooting.ko.md)) are available. Integrations can link to them
+  and keep their own model-specific setup and failure explanations.
 - **Bonded devices.** Bond settle with retry, pairing agents, and
   pair-on-connect stay in each integration. If a second bonded device type
   appears, the connect-with-settle loop is the candidate to move here,

@@ -19,6 +19,14 @@ so any change to them is at least a minor bump and is listed here.
   board-specific installation preparation, illustrated installation screens,
   Home Assistant registration and the user-confirmed AtomS3U web installation route.
 
+### Fixed
+
+- Updated the payload example to use `write_limit()` and corrected retryability,
+  deadline and report-field explanations across the developer docs.
+  Refreshed the design document's guide links and historical rollout labels.
+- Included documentation screenshots in source distributions so the bundled
+  installation guides retain their images.
+
 ## [0.10.0] — 2026-11-01
 
 ### Added
