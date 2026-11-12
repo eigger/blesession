@@ -1,10 +1,26 @@
-# Bluetooth proxy setup and recommended devices
+# Home Assistant Bluetooth proxy introduction and installation
 
 **English** | [한국어](bluetooth.ko.md)
 
 A Bluetooth proxy places a Bluetooth receiver near your device and connects it to Home Assistant over your home network. You can keep using a working local Bluetooth adapter; a proxy is useful when the Home Assistant host is too far away. Installing a custom integration alone does not configure a proxy.
 
 This user guide also applies to integrations that do not use blesession. You do not need to install the Python library to use the guide or configure a proxy. Follow your device integration’s instructions for its own setup, authentication and support.
+
+## What is a Bluetooth proxy?
+
+BLE (Bluetooth Low Energy) is a low-power wireless technology used by devices such as temperature sensors, scales and locks. Walls and other obstacles can prevent their signals from reaching the Bluetooth adapter on your Home Assistant host.
+
+A proxy receives BLE signals near the device and forwards them over your existing Wi-Fi or Ethernet network to Home Assistant. For supported devices, it also carries Home Assistant’s read/write requests.
+
+```text
+BLE device ← Bluetooth → proxy ← Wi-Fi / Ethernet → Home Assistant
+```
+
+For example, place a proxy near an entrance sensor that is too far from the server. With a supported integration, Home Assistant can receive readings and use them in automations without a nearby phone. A proxy does not add support for every Bluetooth product. This guide covers BLE, not Bluetooth Classic audio streaming; check the [Home Assistant Bluetooth guide](https://www.home-assistant.io/integrations/bluetooth/) and your device’s integration for compatibility.
+
+You can add proxies in rooms with poor reception. Each uses your existing home network; they do not form a Bluetooth mesh between proxies. Several proxies can receive the same sensor’s advertisements, and Home Assistant brings the information together. Reception and a working connection are different, so verify an actual device operation after adding a proxy.
+
+For a first installation, follow **choose hardware → install firmware → register in Home Assistant → check the device**.
 
 ## 1. Choose a proxy
 
@@ -13,13 +29,19 @@ Our default recommendation is **Seeed Studio XIAO W5500 Ethernet Adapter V1.2** 
 | Device | Before buying | Purchase |
 |---|---|---|
 | **XIAO W5500 Ethernet Adapter V1.2** | Verify V1.2, the included XIAO module/antenna and PoE power options in the selected bundle. | [AliExpress](https://ko.aliexpress.com/item/1005009310322353.html) |
-| **M5Stack AtomS3U** | USB-A dongle; needs USB power and Wi-Fi. Requires a custom ESPHome build as described below. | [AliExpress](https://ko.aliexpress.com/item/1005005643544014.html) |
+| **M5Stack AtomS3U** | USB-A dongle; needs USB power and Wi-Fi. Generic ESP32 web installation or a custom build. | [AliExpress](https://ko.aliexpress.com/item/1005005643544014.html) |
 
 For the XIAO W5500, ESPHome’s [official installer](https://esphome.io/projects/?type=bluetooth) supports **V1.2 only**; older revisions have wiring/RF limitations. Check the [Seeed board guide](https://wiki.seeedstudio.com/esphome_xiao_w5500_ethernet_adapter/) and [AtomS3U specifications](https://docs.m5stack.com/en/core/AtomS3U) against the product you order. Marketplace links do not guarantee the selected revision or accessories. Recommendations are not hardware validation of every integration/device combination.
 
 ## 2. Install proxy firmware
 
 Flashing replaces the firmware on the proxy. Save any existing configuration first. Choose the instructions for your exact device.
+
+### Before installing
+
+- Prepare the board, stable power, a computer and Chrome or Edge. Boards connected by cable need a USB data cable, not a charge-only cable. AtomS3U plugs directly into USB-A.
+- Have a 2.4 GHz SSID/password ready for Wi-Fi boards, or a LAN connection for Ethernet boards. USB supplies power and the installation connection; normal proxy traffic reaches Home Assistant over Wi-Fi/LAN.
+- Check the board, chip and revision. Use the dedicated entry for XIAO W5500 V1.2. For AtomS3U, select **Generic ESP32** in the [ESPHome web installer](https://esphome.io/projects/?type=bluetooth).
 
 ### XIAO W5500 V1.2: official installer
 
@@ -28,9 +50,46 @@ Flashing replaces the firmware on the proxy. Save any existing configuration fir
 3. Connect Ethernet to your home network and use the power method supported by your board/bundle. The installed Ethernet firmware disables Wi-Fi; it needs a wired network connection.
 4. Continue with Home Assistant registration below. For download-mode or board-specific instructions, use the [Seeed guide](https://wiki.seeedstudio.com/esphome_xiao_w5500_ethernet_adapter/).
 
-### AtomS3U: build with ESPHome Device Builder
+Keep power and USB connected during installation. This Ethernet model does not need the installer’s Wi-Fi setup step. If an add-to-Home-Assistant button appears, use it or skip it and register manually below.
 
-AtomS3U is not a named target in the official proxy installer. Its **Generic ESP32** image targets a different chip and must not be flashed to this ESP32-S3 device.
+### AtomS3U and plain ESP32: web installer
+
+For AtomS3U, select **Generic ESP32**, then **CONNECT → select serial port → INSTALL**. Windows may show a port such as `COM3`. After flashing, follow the prompts to enter the 2.4 GHz Wi-Fi credentials and register in Home Assistant. Plain ESP32 boards follow the same flow. Use a dedicated board entry where available.
+
+### Follow the web installer screens
+
+These examples come from the supplied installation article. Images were extracted from the PDF and the background around dialogs was cleaned up. Current device lists and button labels may differ.
+
+**① Choose the exact board and select CONNECT.** Select Generic ESP32 as shown. For XIAO W5500 V1.2, choose its dedicated entry on the right.
+
+<p align="center">
+  <img src="images/bluetooth-proxy/web-installer-board-selection.png" alt="ESPHome board selection showing Generic ESP32 and dedicated hardware entries including XIAO W5500" width="640">
+</p>
+
+**② Select the connected USB board’s serial port.** This example is from macOS; Windows may show a `COM` port. Choose the USB board, rather than an unrelated Bluetooth serial port.
+
+<p align="center">
+  <img src="images/bluetooth-proxy/serial-port-selection.png" alt="Browser serial port picker with a USB board selected" width="360">
+</p>
+
+**③ Select Install and wait for completion.** Back up the existing configuration before replacing firmware. Keep power and USB connected throughout.
+
+| Start installation | Installation in progress |
+|:---:|:---:|
+| <img src="images/bluetooth-proxy/install-menu.png" alt="Install esphome.bluetooth-proxy menu" width="320"> | <img src="images/bluetooth-proxy/install-progress.png" alt="Firmware installation progress" width="320"> |
+
+**④ Configure the network after installation on Wi-Fi models.** Enter your own 2.4 GHz SSID and password; the pictured network is an example. For XIAO W5500 Ethernet firmware, check the LAN connection instead.
+
+<p align="center">
+  <img src="images/bluetooth-proxy/wifi-setup.png" alt="Wi-Fi network and password setup after installation" width="360">
+</p>
+
+Once connected, continue to **Add the proxy to Home Assistant** below.
+
+<details>
+<summary>Optional: build and manage AtomS3U configuration yourself</summary>
+
+Use this alternative to the web installer when you want to manage YAML directly. The example targets AtomS3U’s ESP32-S3 and 8 MB flash.
 
 1. Install/open [ESPHome Device Builder](https://esphome.io/install/getting-started/) and create a new ESP32-S3 device named `atoms3u-proxy`. Retain the Wi-Fi credentials and API encryption key generated during setup.
 2. Edit its configuration. The minimal example below uses the AtomS3U’s ESP32-S3 and 8 MB flash; it does not enable its microphone, LED or infrared functions. Put your Wi-Fi credentials and generated API key in the Device Builder’s `secrets.yaml` under the three names shown. Use your generated key, not the placeholder. If you need a new key, run `openssl rand -base64 32` in a terminal and use its output for `atoms3u_api_key`. Keep this key private.
@@ -78,6 +137,8 @@ atoms3u_api_key: "YOUR_GENERATED_BASE64_API_KEY"
 
 If adapting an old configuration, remove any `wifi.on_connect` action that calls `ble.disable`; it turns Bluetooth off after Wi-Fi connects. BLE provisioning (`esp32_improv`) is unnecessary when credentials are supplied in YAML; omit it from this dedicated proxy configuration. See [ESPHome BLE actions](https://esphome.io/components/esp32_ble/) and [BLE provisioning](https://esphome.io/components/esp32_improv/). The [M5Stack AtomS3U configuration](https://github.com/m5stack/esphome-yaml/blob/main/examples/kit/atoms3u.yaml) confirms the chip/flash/framework settings. The [ESP32 platform reference](https://esphome.io/components/esp32/) explains the chip/framework settings. This example is a configuration starting point, not a supplied or hardware-tested firmware image; validate it with your installed ESPHome version before flashing.
 
+</details>
+
 ## 3. Add the proxy to Home Assistant
 
 1. Keep the proxy and Home Assistant on a network where they can reach one another.
@@ -87,35 +148,14 @@ If adapting an old configuration, remove any `wifi.on_connect` action that calls
 
 The [Home Assistant ESPHome guide](https://www.home-assistant.io/integrations/esphome/) covers registration and connection options. Adding ESPHome registers the proxy; add your scale, printer or other device using its own integration afterward.
 
+| Web installer’s Home Assistant prompt | Discovered ESPHome proxy in Home Assistant |
+|:---:|:---:|
+| <img src="images/bluetooth-proxy/add-to-home-assistant.png" alt="Add to Home Assistant or Skip in the web installer" width="285"> | <img src="images/bluetooth-proxy/home-assistant-discovery.png" alt="Discovered Bluetooth Proxy in Home Assistant with an Add button" width="360"> |
+
+Add it directly on the left, or choose Skip and add the discovered entry under **Settings → Devices & services** in Home Assistant, as on the right. Device names and identifiers shown are examples; the source Home Assistant screen is in Korean.
+
 ## 4. Check the device connection
 
 Place the proxy near the BLE device, with stable power and network access. Wake the BLE device using its model’s instructions, then add/use its integration in Home Assistant. Close another phone app or gateway connection if the device allows only one connection.
 
 Confirm that the expected entity updates or device command completes. Merely seeing a Bluetooth advertisement does not prove a read/write connection works. Integrations that connect to devices need `bluetooth_proxy.active: true` (GATT support). Tracker **active scanning** requests extra discovery data and is a separate setting; passive scanning does not itself prevent GATT connections. Keep scan timing and connection limits at their defaults initially. See [ESPHome proxy settings](https://esphome.io/components/bluetooth_proxy/) and [BLE scanning](https://esphome.io/components/esp32_ble_tracker/).
-
-<a id="troubleshooting"></a>
-
-## Troubleshooting
-
-Use [common Bluetooth troubleshooting](troubleshooting.md) for stage diagnostics, route interpretation and recovery order, alongside the quick checks below and your device’s guide.
-
-| Symptom | What to try |
-|---|---|
-| Proxy offline in Home Assistant | Check power and network first. For XIAO Ethernet firmware, connect Ethernet. Recheck its IP address/API key and ESPHome logs. |
-| BLE device not discovered (`unreachable`) | Check battery/power, wake the device and move it close to the proxy. Follow the model’s pairing/discovery instructions. |
-| Device found, connection fails (`connect`) | Check GATT support, close other connected apps/gateways, and follow the model’s authentication requirements. Discovery alone does not confirm a connection. |
-| No connection slot (`connect.no_slot`) | Stop overlapping operations or unused long-lived connections. If needed, spread devices across another proxy. |
-| Authentication/session fails | Check the exact model/firmware and required keys or pairing. Repeated retries do not correct a wrong key or unsupported model. |
-| Transfer disconnects (`link_lost`) | Check device battery, proxy power/network and distance at the failure time. Restore the connection before retrying. |
-| A write hangs (`write_timeout`) | Check proxy responsiveness and connection load. Restore the affected proxy/device, then follow the integration’s retry instructions. |
-| No completion confirmation | Check whether the device already performed the operation before sending it again, especially for commands with physical effects. |
-
-Error names and available diagnostics vary by integration. Use its own troubleshooting guide for model-specific steps, retry controls and logs. A proxy has finite connection capacity; increasing retries or scan intensity is not a general fix. Keep it close to the BLE device and away from network equipment or metal enclosures that interfere with reception.
-
-### Reporting a problem
-
-Include Home Assistant, integration and ESPHome versions; proxy/device model and revision; network method; failure time; and steps to reproduce. Include whether discovery works and whether the actual operation succeeds. If the integration offers diagnostics or debug logging, follow its instructions, collect the failing interval, then disable debug logging. A strong advertisement signal is not proof of which proxy handled the connection.
-
-Before posting files publicly, remove Bluetooth/MAC addresses, authentication keys, tokens, internal addresses and personal measurements or names. Compare a successful attempt with the failed one when possible.
-
-Official instructions checked **2026-10-18**. The documentation update did not include physical-device testing.

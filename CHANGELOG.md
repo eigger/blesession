@@ -13,6 +13,12 @@ so any change to them is at least a minor bump and is listed here.
 
 ## [Unreleased]
 
+### Added
+
+- Expanded the English and Korean Bluetooth proxy user guides with an introduction,
+  board-specific installation preparation, illustrated installation screens,
+  Home Assistant registration and the user-confirmed AtomS3U web installation route.
+
 ## [0.10.0] — 2026-11-01
 
 ### Added
