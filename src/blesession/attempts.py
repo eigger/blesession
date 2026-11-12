@@ -29,15 +29,73 @@ import asyncio
 import contextlib
 import logging
 from asyncio import sleep
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+from time import perf_counter
 from typing import Any
 
-from .errors import AttemptTimedOut
+from . import stages
+from .errors import AttemptTimedOut, error_text
 from .stages import StageMap
 from .trace import SessionTrace
 
 _LOGGER = logging.getLogger(__name__)
+
+_LOCK_WAIT = "lock_wait"
+"""The stage timing that records how long an attempt waited for the lock (the
+report's `lock_wait_s`). Not a stage a failure can hit: it is `record`ed, never
+`timed`, so it cannot become `failed_stage`."""
+
+
+@contextlib.asynccontextmanager
+async def _held(lock: asyncio.Lock | None, trace: SessionTrace) -> AsyncIterator[None]:
+    """Hold `lock` for the block, noting on `trace` how long getting it took.
+
+    The wait is recorded as soon as the lock is won, so it precedes every
+    other timing in the report: a user who waited 40 s for another device's
+    job sees why the stages add up to 7. Nothing is recorded without a lock,
+    and nothing when the wait is cut short (the lock was never held).
+    """
+    if lock is None:
+        yield
+        return
+    started = perf_counter()
+    async with lock:
+        trace.record(_LOCK_WAIT, perf_counter() - started)
+        yield
+
+
+def _error_before_timeout(exc: BaseException) -> BaseException | None:
+    """The first error in `exc`'s cause/context chain that is not the bound itself.
+
+    The bound arrives as a `CancelledError` and leaves as the `TimeoutError`
+    `asyncio.timeout` raises from it; a real error raised before that (the link
+    dropped, then the close hung) survives only further down the chain. Guarded
+    against a chain that loops back on itself.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        is_bound = current is exc and isinstance(current, TimeoutError)
+        if not is_bound and not isinstance(current, asyncio.CancelledError):
+            return current
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def _note_timeout_truth(trace: SessionTrace, exc: BaseException) -> None:
+    """Keep what `AttemptTimedOut` would otherwise hide, as trace facts.
+
+    `error_before_timeout`: the real error that preceded the bound, if any.
+    `timed_out_in`: the stage the bound actually interrupted, when that is not
+    the stage `failed_stage` names (the first failure wins there).
+    """
+    if (before := _error_before_timeout(exc)) is not None:
+        trace.note(error_before_timeout=error_text(before))
+    interrupted = stages.primary_of(trace.interrupted_stage, trace.stage_map)
+    if interrupted is not None and interrupted != trace.failed_primary:
+        trace.note(timed_out_in=interrupted)
 
 
 @dataclass
@@ -115,6 +173,11 @@ async def run_attempts[T](
     attempt is returned, so `on_attempt` is the only way to record the
     first attempt of a retry that went on to succeed.
 
+    When a `lock` is given, how long the attempt waited for it is recorded on
+    its trace as the stage timing `lock_wait` (the report's `lock_wait_s`),
+    ahead of every other timing; with no lock there is none. It is a wait,
+    not a stage: it never becomes `failed_stage`.
+
     `attempt_fn` receives the Attempt (use `attempt.trace` for its stages
     and `attempt.state` for anything carried between attempts) and returns
     the result or raises.
@@ -125,7 +188,7 @@ async def run_attempts[T](
     attempt: Attempt[T] | None = None
     for number in range(1, max_attempts + 1):
         attempt = Attempt(number=number, trace=SessionTrace(stage_map), state=dict(state))
-        async with lock if lock is not None else contextlib.nullcontext():
+        async with _held(lock, attempt.trace):
             if guard is not None and (skipped := await guard()) is not None:
                 attempt.skipped = skipped
             else:
@@ -145,6 +208,7 @@ async def run_attempts[T](
                         )
                         timed_out.__cause__ = exc
                         attempt.error = timed_out
+                        _note_timeout_truth(attempt.trace, exc)
                     _LOGGER.debug(
                         "%s attempt %d/%d failed in %s: %s",
                         name or "session",

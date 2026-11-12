@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-DOC = (Path(__file__).parent.parent / "docs" / "adopting.md").read_text()
+DOC = (Path(__file__).parent.parent / "docs" / "adopting.md").read_text(encoding="utf-8")
 
 
 def _block(after: str) -> str:

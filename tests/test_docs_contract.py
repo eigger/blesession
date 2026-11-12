@@ -19,7 +19,7 @@ from blesession import (
 from blesession import errors as errors_mod
 from blesession import testing as testing_mod
 
-DOC = (Path(__file__).parent.parent / "docs" / "contract.md").read_text()
+DOC = (Path(__file__).parent.parent / "docs" / "contract.md").read_text(encoding="utf-8")
 
 
 def _missing(names):

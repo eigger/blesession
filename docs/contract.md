@@ -78,13 +78,29 @@ each call.
   during `settle_s` is `ConnectFailed(detail="settle")`.
 - The close runs in `finally` under its own bound (`DISCONNECT_TIMEOUT_S`) and
   never masks the original exception; a failed close is the `disconnect_error`
-  fact. `keep=True` leaves a successfully opened link to the caller; `client=`
-  runs the next session on it (a stale one is ignored).
+  fact. `keep=True` leaves a successfully opened link to the caller, unless the
+  block is left by cancellation (the attempt bound): that link is closed anyway,
+  and if the close failed or timed out the link is marked dropped, so a later
+  `client=` with that handle is ignored. `client=` runs the next session on a
+  kept link (a stale one is ignored).
+- A link that drops *by itself* during the session (the disconnect callback
+  fires before the session starts its own close) is noted before the close as
+  `link_dropped=True` and `dropped_after_s`: the seconds from the link coming up
+  to the drop. A steady ~30 s reads as a device idle timeout, a few seconds as
+  a bond or connection-parameter problem. On a reused (`client=`) link the clock
+  started when the link was opened, so it is the link's lifetime, not the
+  session's. Neither fact is set by the session's own close, by a drop that
+  only follows from it, or by a connect attempt that failed before the link
+  came up.
 
 ### 3.2 `Notifications(client, characteristic, settle=, recover=, dropped=)`
 
 - A queue: a reply that lands between two waits is kept.
 - Every wait names its `step`. A timeout is `NotificationTimeout(step=...)`.
+  When `wait_for(accept, ...)` (or `request(accept=...)`) times out after
+  frames arrived that `accept` turned down, the error's `rejected` counts them
+  and the message says so ("5 notifications arrived, none accepted"): a device
+  answering something the protocol does not recognise, not a silent one.
 - A wait ends as `SessionDropped` the moment the link goes, not when its
   timeout runs out; what is already queued is delivered first.
 - `request(characteristic, data, *, timeout, step, write_timeout=None, response=False, accept=None, pace_s=0.0)`
@@ -119,7 +135,11 @@ link dropped is `SessionDropped`, not `WriteTimeout`.
 `write_chunks(client, characteristic, data, size, *, step, response=False, gap_s=0, wrap=None, on_chunk=None, write_timeout=WRITE_TIMEOUT_S)`
 returns the number of writes made. `wrap(offset, chunk)` frames a chunk,
 `on_chunk(sent)` runs after each write so a trace keeps the progress of a
-transfer that later fails. An empty `data` writes nothing.
+transfer that later fails. An empty `data` writes nothing. A `SessionDropped`
+or `WriteTimeout` raised part-way carries `sent` and `total` (the writes
+completed, the writes the payload needed) and its message ends
+" (after 37/120 writes)"; a failure before the first write reads 0/N. Any other
+error propagates unchanged, and `guarded_write` on its own sets neither.
 
 ### 3.4 `characteristic_or_raise(client, service_uuid, char_uuid, *, properties=(), min_write_size=None, label="device")`
 
@@ -154,6 +174,10 @@ that reports nothing. `mtu` is never guessed from a write size.
 ### 3.5 `run_attempts(attempt_fn, *, lock, max_attempts, attempt_timeout_s, pause_s, retry_if, guard, on_attempt, stage_map, name)`
 
 - The lock is held for **one attempt**; between attempts it is released.
+- With a `lock`, how long the attempt waited for it is recorded on its trace as
+  the stage timing `lock_wait` (the report's `lock_wait_s`), ahead of every
+  other timing; without a lock there is none. It is a wait, not a stage: it is
+  never `failed_stage`.
 - Every attempt is bounded, connecting included, **when you pass
   `attempt_timeout_s`** (the default `None` is no bound: always pass one). A
   bound that fires is `AttemptTimedOut` and `timed_out=True`; it is not
@@ -193,9 +217,11 @@ with `SessionTrace(stage_map=...)`; the report carries both.
 up), `record(name, seconds)`, `fail(name)`, `forgive(name=None)`,
 `note(**facts)` (scalars only), `failure(exc)` → `(stage, detail)`,
 `as_dict()`; read `stage` (the stage running now), `failed_primary`,
-`failed_detail`, `timings`, `facts`, and `link` (what `ble_session()` learnt
-about the radio). The **innermost** stage an exception escapes from, and the
-first failure, win.
+`failed_detail`, `interrupted_stage`, `timings`, `facts`, and `link` (what
+`ble_session()` learnt about the radio). The **innermost** stage an exception
+escapes from, and the first failure, win. `interrupted_stage` is the innermost
+stage a *cancellation* first escaped from (what the attempt bound actually
+interrupted), which can differ from `failed_stage`.
 
 ## 5. Errors
 
@@ -217,9 +243,9 @@ device and you want the generic `write_timeout` reading for a hung write.
 | `Unreachable` | no radio has a handle for the address | `unreachable` | `True` | |
 | `ConnectFailed` | `establish_connection` raised, or the link dropped in the settle | `connect` | `True` | `detail="settle"` for a settle drop |
 | `GattMismatch` | the device lacks the service, characteristic, property or write size | `session` | **`False`**, `True` for a too-small write size or a failed lookup (§3.4) | |
-| `SessionDropped` | the link went away mid-session | `session` | `True` | `detail` = the step that was waiting |
-| `NotificationTimeout` | a wait ran out | | `True` | `step`, `timeout`; also a `TimeoutError` |
-| `WriteTimeout` | a write did not return in time | | `True` | `step`, `timeout`; a `NotificationTimeout` |
+| `SessionDropped` | the link went away mid-session | `session` | `True` | `detail` = the step that was waiting; `sent`, `total` from `write_chunks()` |
+| `NotificationTimeout` | a wait ran out | | `True` | `step`, `timeout`, `rejected` (frames that arrived and were not accepted, default 0); also a `TimeoutError` |
+| `WriteTimeout` | a write did not return in time | | `True` | `step`, `timeout`; a `NotificationTimeout`; `sent`, `total` from `write_chunks()` |
 | `AttemptTimedOut` | the attempt bound fired | the stage that was running | `True`\* | `timeout`; also a `TimeoutError` |
 | `DeviceError` | **you raise it**: the device answered with an error | from the trace | as you set it | `code`, `retryable` |
 
@@ -239,7 +265,14 @@ code), `run_attempts` still records it with the stage from the trace.
 and `report_attempt(attempt, operation=, facts=, cause=, noun=, attempts=)`
 return a dict in a fixed key order: `REPORT_KEYS`, then `FACT_KEYS`, then any
 other key passed in `facts=`, then one `<stage>_s` per timed stage, then the
-trace's `note()` facts. Everything a session can put on a sensor:
+trace's `note()` facts. Everything a session can put on a sensor.
+
+The `REPORT_KEYS` are reserved: a key of that list in `facts=` or in a
+`note()` is skipped, never overwriting or adding to the report's own (a
+`note(skipped=3)` would otherwise turn a success into a skipped session, and
+`note(error=...)` into a failure), with a warning once per key name (debug
+after that). Pick another name.
+
 
 | key | when | meaning |
 |---|---|---|
@@ -254,10 +287,13 @@ trace's `note()` facts. Everything a session can put on a sensor:
 | `timed_out` | attempt bound fired | the attempt exceeded its deadline; not proof of a specific transport or device fault |
 | `attempt`, `attempts` | via `report_attempt` | which try, out of how many |
 | `retrying` | a failed attempt another follows | `True`; absent otherwise (§6.1) |
-| `via`, `via_type`, `rssi`, `paths`, `advertised_via`, `via_unconfirmed` | radio known | `FACT_KEYS`, from `radio_facts()` |
-| `<stage>_s` | timed | seconds, in the order stages finished |
+| `via`, `via_type`, `rssi`, `paths`, `advertised_via`, `via_unconfirmed`, `last_seen_s`, `paths_passive`, `slots_free`, `slots` | radio known | `FACT_KEYS`, from `radio_facts()` (§6.2) |
+| `<stage>_s` | timed | seconds, in the order stages finished; `lock_wait_s` (waiting for the `lock`) comes first |
 | `mtu` | the backend reported one | the ATT MTU, read at the end of the session, before the close (a placeholder such as BlueZ's warned default is left out) |
 | `reused`, `disconnect_error`, `stale_close_error` | when they happen | `keep`/`client=` reuse; a close that failed |
+| `link_dropped`, `dropped_after_s` | the link dropped by itself | `True`; the seconds from the link coming up to the drop (§3.1) |
+| `error_before_timeout` | the bound fired after a real error | the first error in the chain that is not the bound itself (the `error` is the `AttemptTimedOut`) |
+| `timed_out_in` | the bound fired in another stage than `failed_stage` | the primary stage the cancellation actually interrupted (a close that outlasted the bound: `disconnect`) |
 | your `note()` facts | always | anything scalar |
 
 A key is added without notice; one is renamed, removed or changes meaning
@@ -288,10 +324,15 @@ trace and error win). It cannot raise.
 
 `SessionReports.record(report, *, now=None)` files it: every kind becomes
 `last` and the latest of its `operation` (`of(operation)`); a `failure` also
-sets `last_failure`, increments `failures` and sets `last_failure_at` (UTC); a
+sets `last_failure`, increments `failures` and sets `last_failure_at` (UTC); an
+`ok` sets `last_success_at` (UTC); a
 `retried` sets `last_retry` only — the write may still succeed, so it is not a
 failure, but the evidence of the intermittent attempt is kept. `last_kind` is
-the kind of the report filed last. `add_listener(cb)` is called after every
+the kind of the report filed last. `sessions` counts the sessions that
+finished (`ok` and `failure`; a `retried` attempt is not the end of one and a
+`skipped` one never ran), so `failures / sessions` is the failure rate;
+`consecutive_failures` is the streak since the last `ok` (an `ok` resets it,
+`retried` and `skipped` leave it). `add_listener(cb)` is called after every
 `record` and returns the function that removes it; a listener that raises is
 logged and does not stop `record`. `clear()` forgets every report and count
 (listeners stay).
@@ -300,6 +341,17 @@ Whether a session is recorded at all is the integration's call, made by not
 calling `record`: **a cancelled session (`CancelledError`) is never recorded**,
 and a poll that finds an advertisement-driven device asleep is the
 integration's to leave out.
+
+### 6.2 The radio facts
+
+`radio_facts()` adds, each only when it can be determined (an older Home
+Assistant or habluetooth lacking the API yields no fact, not an exception):
+
+| key | meaning |
+|---|---|
+| `last_seen_s` | seconds since any radio, connectable or not, last heard the device: asleep / gone, or in range and not connecting |
+| `paths_passive` | radios that hear the device but cannot connect to it (passive-only scanners); only when more than 0. `paths` still counts connectable radios only |
+| `slots_free`, `slots` | free and total connection slots of the radio reported as `via`, when it tracks them |
 
 ## 7. Callback shapes
 
@@ -332,13 +384,17 @@ sentence from your own `cause` callback carries no key.
 | `attempt_timed_out` | the BLE stack stopped answering and the attempt was cut at its bound |
 | `disconnect.timed_out` | the work was done; the bound fired while the link closed |
 | `unreachable` | no radio sees the device |
-| `connect.no_slot` | the proxy has no free connection slot |
+| `unreachable.passive_only` | radios hear the device (`paths_passive` > 0) but none can connect (`paths` is 0 or absent) |
+| `connect.no_slot` | the proxy has no free connection slot (by `BleakOutOfConnectionSlotsError`, or "slot" in the text) |
+| `connect.not_found` | the device stopped advertising between the lookup and the connect (`BleakNotFoundError`) |
+| `connect.aborted` | the connection was aborted while being made: interference or marginal range (`BleakAbortedError`) |
 | `connect.settle` | the link dropped before encryption settled |
 | `connect.failed` | the link could not be established |
 | `link_lost` | the link went away mid-session |
 | `write_timeout` | a write did not complete: the adapter or proxy stopped taking data |
 | `session.gatt_mismatch` | the device lacks the GATT profile the protocol needs |
 | `session.refused` | connected, but dropped or refused the session before the protocol started |
+| `unrecognised_answer` | in `auth`, `transfer` or `finish`: notifications arrived but none was accepted (`NotificationTimeout.rejected` > 0) |
 | `auth.no_answer` | the handshake went unanswered |
 | `transfer.no_answer` | the device stopped answering mid-transfer |
 | `finish.no_answer` | the data was taken but completion was not reported |

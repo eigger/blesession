@@ -63,9 +63,17 @@ class ConnectFailed(BleSessionError):
 
 
 class SessionDropped(BleSessionError):
-    """The link went away mid-session."""
+    """The link went away mid-session.
+
+    Raised from `write_chunks()` part-way through a payload it carries `sent`
+    and `total`: the writes completed and the writes the payload needed, so
+    a failure says how far it got (`WriteTimeout` does the same). None
+    everywhere else.
+    """
 
     stage = stages.SESSION
+    sent: int | None = None
+    total: int | None = None
 
 
 class GattMismatch(BleSessionError):
@@ -113,14 +121,27 @@ class NotificationTimeout(BleSessionError, TimeoutError):
 
     Also a TimeoutError so protocol code that already catches one keeps
     working; unlike asyncio's it always carries a message.
+
+    `rejected` is how many notifications arrived during that wait and were
+    not accepted (`Notifications.wait_for(accept, ...)` returned False for
+    them). A silent device and one that keeps answering something the
+    protocol does not recognise are different faults, and the default
+    message says which. A `message` of the integration's own is left as it
+    is: it owns the wording, and still has `rejected` to read.
     """
 
-    def __init__(self, timeout: float, *, step: str, message: str | None = None) -> None:
-        super().__init__(
-            message or f"No response from device within {timeout:g}s after {step}", detail=step
-        )
+    def __init__(
+        self, timeout: float, *, step: str, message: str | None = None, rejected: int = 0
+    ) -> None:
+        if message is None:
+            message = f"No response from device within {timeout:g}s after {step}"
+            if rejected > 0:
+                noun = "notification" if rejected == 1 else "notifications"
+                message += f" ({rejected} {noun} arrived, none accepted)"
+        super().__init__(message, detail=step)
         self.step = step
         self.timeout = timeout
+        self.rejected = rejected
 
 
 class WriteTimeout(NotificationTimeout):
@@ -131,6 +152,12 @@ class WriteTimeout(NotificationTimeout):
     but not silence from the device: the write never returned. The reports
     tell the two apart.
     """
+
+    sent: int | None = None
+    """Writes completed before this one, set by `write_chunks()`; None for a
+    write made on its own."""
+    total: int | None = None
+    """Writes the payload needed (see `sent`)."""
 
     def __init__(self, timeout: float, *, step: str) -> None:
         super().__init__(

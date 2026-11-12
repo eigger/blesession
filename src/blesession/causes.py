@@ -20,6 +20,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from bleak_retry_connector import (
+    BleakAbortedError,
+    BleakNotFoundError,
+    BleakOutOfConnectionSlotsError,
+)
+
 from . import stages
 from .errors import (
     AttemptTimedOut,
@@ -49,7 +55,27 @@ def placement(facts: Mapping[str, Any], *, noun: str = "device") -> str:
     return text + f" — move the {noun} or add a proxy."
 
 
-def cause_key(stage: str | None, error: str, *, exc: BaseException | None = None) -> str | None:
+def _connect_cause(exc: BaseException | None) -> BaseException | None:
+    """The error `establish_connection` raised, behind `ConnectFailed`.
+
+    `ble_session()` raises `ConnectFailed(...) from exc`, so the original is
+    the `__cause__`; an error handed over bare is its own cause.
+    """
+    return getattr(exc, "__cause__", None) or exc
+
+
+def _count(value: Any) -> int:
+    """`value` as a count; anything that is not a number is zero."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def cause_key(
+    stage: str | None,
+    error: str,
+    *,
+    exc: BaseException | None = None,
+    facts: Mapping[str, Any] | None = None,
+) -> str | None:
     """The stable key for a failure, or None when there is nothing to say.
 
     The one place that decides *which* generic reading a failure gets;
@@ -57,6 +83,10 @@ def cause_key(stage: str | None, error: str, *, exc: BaseException | None = None
     report contract exactly as a stage name is — it goes in the CHANGELOG
     when it changes — so an integration can translate the sentence for
     Home Assistant instead of publishing this English one.
+
+    `facts` (the radio facts, optional) refines `unreachable`: radios that
+    hear the device but cannot connect to it are not the same fault as none
+    hearing it.
     """
     err = error.lower()
     # The type first, so a NotificationTimeout an integration worded itself
@@ -64,7 +94,13 @@ def cause_key(stage: str | None, error: str, *, exc: BaseException | None = None
     # says as much without carrying the type keeps its sentence too. Both,
     # never either — as the `settle` branch below does it.
     unanswered = isinstance(exc, NotificationTimeout) or "no response" in err
-    lost = isinstance(exc, SessionDropped) or "link dropped" in err
+    # A raw backend error says the same thing in its own words ("Not
+    # connected", "Peripheral X is not connected", "Disconnected"): the link
+    # was gone when the stage touched it. Connect-stage failures branch off
+    # above, and a `disconnect` stage is excluded below.
+    lost = isinstance(exc, SessionDropped) or any(
+        marker in err for marker in ("link dropped", "not connected", "disconnected")
+    )
     if isinstance(exc, AttemptTimedOut):
         # The bound fired while the close ran: the work was done, but the
         # cancellation took the block's result with it.
@@ -81,12 +117,25 @@ def cause_key(stage: str | None, error: str, *, exc: BaseException | None = None
         # device: it reads the same in whichever stage it happened.
         return "write_timeout"
     if stage == stages.UNREACHABLE:
+        known = facts or {}
+        # An absent `paths` means the radio facts were not read, which says
+        # nothing; only a passive radio that does hear the device changes
+        # the reading.
+        if not known.get("paths") and _count(known.get("paths_passive")) > 0:
+            return "unreachable.passive_only"
         return "unreachable"
     if stage == stages.CONNECT:
-        if "slot" in err:
+        # The type of the original error where there is one, the text where
+        # there is not (an old bleak_retry_connector, a re-worded error).
+        original = _connect_cause(exc)
+        if isinstance(original, BleakOutOfConnectionSlotsError) or "slot" in err:
             return "connect.no_slot"
         if getattr(exc, "detail", None) == "settle" or "settle" in err:
             return "connect.settle"
+        if isinstance(original, BleakNotFoundError):
+            return "connect.not_found"
+        if isinstance(original, BleakAbortedError):
+            return "connect.aborted"
         return "connect.failed"
     if lost and stage != stages.DISCONNECT:
         # A drop the *close* reported is the close failing, not the session:
@@ -94,6 +143,13 @@ def cause_key(stage: str | None, error: str, *, exc: BaseException | None = None
         return "link_lost"
     if stage == stages.SESSION:
         return "session.refused"
+    if (
+        stage in (stages.AUTH, stages.TRANSFER, stages.FINISH)
+        and isinstance(exc, NotificationTimeout)
+        and _count(exc.rejected) > 0
+    ):
+        # Frames arrived and every one was turned down: not a silent device.
+        return "unrecognised_answer"
     if stage == stages.AUTH:
         return "auth.no_answer" if unanswered else None
     if stage == stages.TRANSFER:
@@ -115,8 +171,22 @@ CAUSES: dict[str, str] = {
         "No radio currently sees the {noun}: out of range, asleep, its battery "
         "flat, or the adapter / proxy is down."
     ),
+    "unreachable.passive_only": (
+        "Radios hear the {noun} but none of them can connect to it (passive-only "
+        "scanners): add a connectable adapter or an active Bluetooth proxy "
+        "within range."
+    ),
     "connect.no_slot": (
         "The proxy has no free connection slot; add a proxy or reduce the BLE devices it serves."
+    ),
+    "connect.not_found": (
+        "The {noun} stopped advertising between the lookup and the connect: it "
+        "went out of range or to sleep. Usually transient; if it repeats, move "
+        "it closer or add a proxy.{where}"
+    ),
+    "connect.aborted": (
+        "The connection to the {noun} was aborted while it was being made: "
+        "typically radio interference or a marginal signal.{where}"
     ),
     "connect.settle": (
         "The {noun} accepted the link and dropped it before encryption "
@@ -141,6 +211,10 @@ CAUSES: dict[str, str] = {
         "Connected, but the {noun} does not expose the GATT service or "
         "characteristic the protocol needs (or its write size is too small): "
         "another model or firmware, or a link that has not negotiated its MTU."
+    ),
+    "unrecognised_answer": (
+        "The {noun} kept answering, but with nothing the protocol accepts: "
+        "another model or firmware, or replies to an earlier request.{where}"
     ),
     "auth.no_answer": (
         "The {noun} did not answer the handshake: not ready, or the link dropped.{where}"
@@ -184,7 +258,7 @@ def generic_cause(
     generic table: a report carries both, so a reader gets the sentence and
     an integration can translate it.
     """
-    key = cause_key(stage, error, exc=exc)
+    key = cause_key(stage, error, exc=exc, facts=facts)
     if key is None:
         return None
     return CAUSES[key].format(noun=noun, where=placement(facts, noun=noun))

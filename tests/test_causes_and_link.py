@@ -1,3 +1,12 @@
+import pytest
+from bleak.exc import BleakError
+from bleak_retry_connector import (
+    BleakAbortedError,
+    BleakConnectionError,
+    BleakNotFoundError,
+    BleakOutOfConnectionSlotsError,
+)
+
 from blesession import (
     CAUSES,
     AttemptTimedOut,
@@ -115,7 +124,13 @@ def test_every_key_has_a_sentence_and_every_sentence_a_key():
             ("", ConnectFailed("x", detail="settle")),
             ("", GattMismatch("no service")),
             ("", WriteTimeout(5, step="x")),
+            ("", NotificationTimeout(5, step="x", rejected=3)),
+            ("", _connect_failure(BleakNotFoundError("gone"))),
+            ("", _connect_failure(BleakAbortedError("aborted"))),
+            ("", _connect_failure(BleakOutOfConnectionSlotsError("full"))),
         )
+    } | {
+        cause_key(stages.UNREACHABLE, "", facts={"paths": 0, "paths_passive": 1}),
     }
     assert reachable - {None} == set(CAUSES)
 
@@ -181,3 +196,103 @@ def test_cause_callback_receives_the_error_to_test_its_type():
     report = build_report(operation="op", trace=SessionTrace(), exc=exc, cause=cause)
     assert seen == [exc]
     assert report["likely_cause"] == "silent tag"
+
+
+@pytest.mark.parametrize(
+    "text", ["Not connected", "Peripheral AA:BB is not connected", "Disconnected"]
+)
+@pytest.mark.parametrize("stage", [stages.AUTH, stages.TRANSFER, stages.FINISH])
+def test_a_raw_backend_not_connected_error_reads_as_a_lost_link(stage, text):
+    assert cause_key(stage, text, exc=BleakError(text)) == "link_lost"
+
+
+def test_not_connected_text_does_not_change_connect_or_disconnect_readings():
+    assert cause_key(stages.CONNECT, "Not connected") == "connect.failed"
+    assert cause_key(stages.DISCONNECT, "Not connected") == "disconnect.close_failed"
+
+
+def _connect_failure(original):
+    """A ConnectFailed the way ble_session raises it: `from` the original."""
+    exc = ConnectFailed(str(original) or type(original).__name__)
+    exc.__cause__ = original
+    return exc
+
+
+@pytest.mark.parametrize(
+    ("original", "key"),
+    [
+        (BleakOutOfConnectionSlotsError("full"), "connect.no_slot"),
+        (BleakNotFoundError("gone"), "connect.not_found"),
+        (BleakAbortedError("aborted"), "connect.aborted"),
+        (BleakConnectionError("after all retries"), "connect.failed"),
+        (OSError("something else"), "connect.failed"),
+    ],
+)
+def test_a_connect_failure_is_read_from_the_type_of_the_original_error(original, key):
+    exc = _connect_failure(original)
+    assert cause_key(stages.CONNECT, str(exc), exc=exc) == key
+    assert generic_cause(stages.CONNECT, str(exc), {}, exc=exc, noun="tag")
+
+
+def test_the_slot_text_marker_and_the_settle_reading_keep_their_precedence():
+    # The text marker still works with no type to go with it.
+    exc = _connect_failure(BleakError("out of connection slot"))
+    assert cause_key(stages.CONNECT, str(exc), exc=exc) == "connect.no_slot"
+    # A settle drop is the library's own reading, whatever else the chain holds.
+    settle = ConnectFailed("Link dropped 1s into the post-connect settle", detail="settle")
+    settle.__cause__ = BleakAbortedError("aborted")
+    assert cause_key(stages.CONNECT, str(settle), exc=settle) == "connect.settle"
+    # A slot error outranks the not-found/aborted readings.
+    both = _connect_failure(BleakOutOfConnectionSlotsError("aborted: no slot"))
+    assert cause_key(stages.CONNECT, str(both), exc=both) == "connect.no_slot"
+
+
+def test_the_connect_kinds_read_in_the_other_stages_only_as_connect():
+    exc = _connect_failure(BleakNotFoundError("gone"))
+    assert cause_key(stages.SESSION, str(exc), exc=exc) == "session.refused"
+
+
+@pytest.mark.parametrize("stage", [stages.AUTH, stages.TRANSFER, stages.FINISH])
+def test_frames_that_arrived_and_were_all_rejected_are_not_a_silent_device(stage):
+    silent = NotificationTimeout(5, step="x")
+    chatty = NotificationTimeout(5, step="x", rejected=5)
+    assert cause_key(stage, str(silent), exc=silent) == f"{stage}.no_answer"
+    assert cause_key(stage, str(chatty), exc=chatty) == "unrecognised_answer"
+    text = generic_cause(stage, str(chatty), WEAK, exc=chatty, noun="tag")
+    assert text is not None and "kept answering" in text and "tag" in text
+    assert placement(WEAK, noun="tag") in text
+
+
+def test_a_rejected_count_changes_nothing_outside_auth_transfer_finish():
+    chatty = NotificationTimeout(5, step="x", rejected=5)
+    assert cause_key(stages.SESSION, str(chatty), exc=chatty) == "session.refused"
+    assert cause_key("readout", str(chatty), exc=chatty) is None
+    assert cause_key(stages.DISCONNECT, str(chatty), exc=chatty) == "disconnect.close_failed"
+
+
+def test_a_write_timeout_keeps_reading_as_one():
+    hung = WriteTimeout(5, step="x")
+    assert hung.rejected == 0
+    for stage in (stages.AUTH, stages.TRANSFER, stages.FINISH):
+        assert cause_key(stage, str(hung), exc=hung) == "write_timeout"
+
+
+def test_a_worded_timeout_with_rejected_frames_still_reads_as_unrecognised():
+    own = NotificationTimeout(5, step="x", message="the tag never confirmed", rejected=2)
+    assert str(own) == "the tag never confirmed"
+    assert cause_key(stages.AUTH, str(own), exc=own) == "unrecognised_answer"
+
+
+def test_radios_that_hear_the_device_but_cannot_connect_are_their_own_reading():
+    passive = {"paths_passive": 2}
+    assert cause_key(stages.UNREACHABLE, "x", facts=passive) == "unreachable.passive_only"
+    assert cause_key(stages.UNREACHABLE, "x", facts={"paths": 0, **passive}) == (
+        "unreachable.passive_only"
+    )
+    # A connectable radio hearing it, or nobody hearing it, is the old reading.
+    assert cause_key(stages.UNREACHABLE, "x", facts={"paths": 1, **passive}) == "unreachable"
+    assert cause_key(stages.UNREACHABLE, "x", facts={"paths": 0}) == "unreachable"
+    assert cause_key(stages.UNREACHABLE, "x", facts={"paths_passive": 0}) == "unreachable"
+    assert cause_key(stages.UNREACHABLE, "x") == "unreachable"
+    text = generic_cause(stages.UNREACHABLE, "x", passive, noun="tag")
+    assert text is not None and "tag" in text and "connectable adapter" in text

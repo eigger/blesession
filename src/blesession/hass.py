@@ -70,6 +70,56 @@ def _never_raises[**P](func: Callable[P, dict[str, Any]]) -> Callable[P, dict[st
     return wrapper
 
 
+def _optional[T, **P](func: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T | None:
+    """`func(...)`, or None when it fails: one optional fact must not take the others down."""
+    try:
+        return func(*args, **kwargs)
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug("A radio fact could not be read", exc_info=True)
+        return None
+
+
+def _monotonic_now() -> float | None:
+    """The clock a service info's `time` is stamped with, or None without it.
+
+    habluetooth stamps every advertisement with `monotonic_time_coarse()` from
+    bluetooth_data_tools (its own dependency), not with `time.time()`, so the
+    age of one is only that clock minus `time`.
+    """
+    try:
+        from bluetooth_data_tools import monotonic_time_coarse
+    except ImportError:
+        return None
+    return float(monotonic_time_coarse())
+
+
+def _seconds_since_heard(hass: HomeAssistant, address: str) -> float | None:
+    """Seconds since any radio, connectable or not, last heard the device."""
+    from homeassistant.components.bluetooth import async_last_service_info
+
+    info = async_last_service_info(hass, address, connectable=False)
+    stamped = getattr(info, "time", None)
+    now = _monotonic_now()
+    if isinstance(stamped, bool) or not isinstance(stamped, int | float) or now is None:
+        return None
+    return round(max(0.0, now - stamped), 1)
+
+
+def _slots(scanner: Any) -> tuple[int, int] | None:
+    """(free, slots) of a scanner's connection slots, when it can say.
+
+    `get_allocations()` is habluetooth's (6.x, `BaseHaScanner`) and returns None
+    for a scanner that does not track slots; an older build lacks the method.
+    """
+    get = getattr(scanner, "get_allocations", None)
+    allocations = get() if callable(get) else None
+    free = getattr(allocations, "free", None)
+    slots = getattr(allocations, "slots", None)
+    if not isinstance(free, int) or not isinstance(slots, int):
+        return None
+    return free, slots
+
+
 @_never_raises
 def radio_facts(hass: HomeAssistant, address: str, link: LinkInfo | None = None) -> dict[str, Any]:
     """Which radio the session went through, its RSSI and how many reach the device.
@@ -88,6 +138,12 @@ def radio_facts(hass: HomeAssistant, address: str, link: LinkInfo | None = None)
         advertised_via  the scanner whose advertisement was strongest, only
                         when it is not the radio the link took (a failover, or
                         on a bonded device the one proxy that holds the bond)
+        last_seen_s     seconds since any radio, connectable or not, last heard
+                        the device: asleep / gone, or in range and not connecting
+        paths_passive   radios that hear the device but cannot connect to it
+                        (non-connectable scanners); only when more than 0
+        slots_free      free connection slots of the radio reported as `via`, and
+        slots           its total, when the radio tracks them
 
     `link` is what ble_session() recorded on the trace; None (a session that
     never connected) falls back to the advertising scanner.
@@ -136,4 +192,15 @@ def radio_facts(hass: HomeAssistant, address: str, link: LinkInfo | None = None)
     facts["paths"] = len(async_scanner_devices_by_address(hass, address, connectable=True))
     if advertised is not None and connected is not None and advertised is not connected:
         facts["advertised_via"] = advertised.name
+    # Each of these is newer than the rest and may be missing on an older
+    # Home Assistant or habluetooth: no fact, never an exception.
+    if (last_seen := _optional(_seconds_since_heard, hass, address)) is not None:
+        facts["last_seen_s"] = last_seen
+    heard = _optional(
+        lambda: len(async_scanner_devices_by_address(hass, address, connectable=False))
+    )
+    if heard is not None and (passive := heard - facts["paths"]) > 0:
+        facts["paths_passive"] = passive
+    if connected is not None and (slots := _optional(_slots, connected)) is not None:
+        facts["slots_free"], facts["slots"] = slots
     return facts

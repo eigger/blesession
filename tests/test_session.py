@@ -847,3 +847,273 @@ async def test_no_mtu_is_noted_when_the_backend_has_none(client):
     async with ble_session(FakeDevice(), trace=trace):
         pass
     assert "mtu" not in trace.facts
+
+
+async def test_a_backend_error_under_a_dropped_link_is_a_session_drop(client):
+    async with ble_session(FakeDevice()) as live:
+        dropped = session_mod.dropped_event(live)
+
+        async def dies_under_the_write(*_args, **_kwargs):
+            live.drop()  # the link goes while the write is in flight
+            raise BleakError("Not connected")
+
+        live.write_gatt_char = dies_under_the_write
+        with pytest.raises(SessionDropped) as info:
+            await transfer_mod.guarded_write(
+                live, "w", b"x", step="upload", dropped=dropped, phase="during"
+            )
+        assert "during upload" in str(info.value)
+        assert isinstance(info.value.__cause__, BleakError)
+
+
+async def test_a_backend_error_on_a_live_link_is_left_alone(client):
+    async with ble_session(FakeDevice()) as live:
+        live.fail_write = BleakError("GATT busy")
+        with pytest.raises(BleakError, match="GATT busy"):
+            await transfer_mod.guarded_write(live, "w", b"x", step="upload")
+
+
+async def test_the_attempt_bound_closes_a_kept_link_and_it_is_not_reused(client):
+    """keep=True hands back a link the library declared dead only when the block ends."""
+    handles = []
+
+    async def attempt(a):
+        async with ble_session(FakeDevice(), trace=a.trace, keep=True) as live:
+            handles.append(live)
+            await asyncio.sleep(5)
+
+    result = await run_attempts(attempt, attempt_timeout_s=0.05)
+    assert result.timed_out
+    assert client.disconnects == 1 and not client.is_connected
+    trace = SessionTrace()
+    async with ble_session(FakeDevice(), trace=trace, client=handles[0], keep=True):
+        pass
+    assert "reused" not in trace.facts
+
+
+async def test_a_failed_close_after_the_bound_marks_the_kept_link_dead(client):
+    client.fail_disconnect = RuntimeError("proxy gone")
+
+    async def attempt(a):
+        async with ble_session(FakeDevice(), trace=a.trace, keep=True):
+            await asyncio.sleep(5)
+
+    await run_attempts(attempt, attempt_timeout_s=0.05)
+    assert client.is_connected  # the close failed, so the backend still says up
+    assert not session_mod.still_up(client)
+
+
+async def test_a_normal_or_ordinary_error_exit_still_keeps_the_link(client):
+    with pytest.raises(ValueError):
+        async with ble_session(FakeDevice(), keep=True):
+            raise ValueError("boom")
+    assert client.disconnects == 0 and session_mod.still_up(client)
+
+
+async def test_a_timeout_after_rejected_frames_says_so_and_counts_them(client):
+    async with ble_session(FakeDevice()):
+        async with Notifications(client, "n") as replies:
+            for _ in range(5):
+                client.reply(b"\x00")
+            with pytest.raises(NotificationTimeout) as info:
+                await replies.wait_for(lambda d: False, 0.01, step="done")
+    assert info.value.rejected == 5
+    assert str(info.value) == (
+        "No response from device within 0.01s after done (5 notifications arrived, none accepted)"
+    )
+
+
+async def test_a_silent_wait_rejects_nothing(client):
+    async with ble_session(FakeDevice()):
+        async with Notifications(client, "n") as replies:
+            with pytest.raises(NotificationTimeout) as info:
+                await replies.wait_for(lambda d: False, 0.01, step="done")
+    assert info.value.rejected == 0
+    assert str(info.value) == "No response from device within 0.01s after done"
+
+
+async def test_only_the_frames_of_this_wait_are_counted(client):
+    async with ble_session(FakeDevice()):
+        async with Notifications(client, "n") as replies:
+            client.reply(b"\x01")
+            assert await replies.wait_for(lambda d: d == b"\x01", 1, step="first") == b"\x01"
+            client.reply(b"\x02")
+            with pytest.raises(NotificationTimeout) as info:
+                await replies.wait_for(lambda d: False, 0.01, step="second")
+    assert info.value.rejected == 1
+    assert "(1 notification arrived, none accepted)" in str(info.value)
+
+
+async def test_request_with_accept_carries_the_rejected_count(client):
+    client.on_write = lambda _char, _data: (client.reply(b"\x09"), client.reply(b"\x08"))
+    async with ble_session(FakeDevice()):
+        async with Notifications(client, "n") as replies:
+            with pytest.raises(NotificationTimeout) as info:
+                await replies.request(
+                    "w", b"\xaa", timeout=0.01, step="part", accept=lambda d: d == b"\x02"
+                )
+    assert info.value.rejected == 2 and info.value.step == "part"
+
+
+def test_the_old_notification_timeout_signature_keeps_working():
+    plain = NotificationTimeout(2.5, step="start")
+    assert (plain.rejected, plain.step, plain.timeout) == (0, "start", 2.5)
+    worded = NotificationTimeout(2.5, step="start", message="mine")
+    assert str(worded) == "mine" and worded.rejected == 0
+
+
+async def test_write_chunks_says_how_far_a_dropped_transfer_got(client):
+    async with ble_session(FakeDevice()) as c:
+
+        def on_chunk(sent):
+            if sent == 2:
+                c.drop()
+
+        with pytest.raises(SessionDropped) as info:
+            await write_chunks(c, "w", b"abcdefgh", 2, step="transfer", on_chunk=on_chunk)
+    assert (info.value.sent, info.value.total) == (2, 4)
+    assert str(info.value).endswith("(after 2/4 writes)")
+    assert str(info.value).count("(after") == 1
+
+
+async def test_write_chunks_says_how_far_a_stalled_write_got(client):
+    from blesession import WriteTimeout
+
+    real = client.write_gatt_char
+
+    async def hang_on_the_third(char, data, response=False):
+        if len(client.writes) == 2:
+            client.write_delay_s = 3600
+        await real(char, data, response)
+
+    client.write_gatt_char = hang_on_the_third
+    with pytest.raises(WriteTimeout) as info:
+        await write_chunks(client, "w", b"abcdefgh", 2, step="t", write_timeout=0.01)
+    assert (info.value.sent, info.value.total) == (2, 4)
+    assert str(info.value).endswith("(after 2/4 writes)")
+
+
+async def test_write_chunks_before_the_first_write_reads_zero(client):
+    async with ble_session(FakeDevice()) as c:
+        c.drop()
+        with pytest.raises(SessionDropped) as info:
+            await write_chunks(c, "w", b"abcde", 2, step="transfer")
+    assert (info.value.sent, info.value.total) == (0, 3)
+    assert str(info.value).endswith("(after 0/3 writes)")
+
+
+async def test_write_chunks_leaves_other_errors_alone(client):
+    client.fail_write = OSError("write failed")
+    with pytest.raises(OSError) as info:
+        await write_chunks(client, "w", b"abcdefgh", 2, step="t")
+    assert str(info.value) == "write failed" and not hasattr(info.value, "sent")
+
+
+async def test_guarded_write_on_its_own_carries_no_progress(client):
+    async with ble_session(FakeDevice()) as c:
+        c.drop()
+        with pytest.raises(SessionDropped) as info:
+            await transfer_mod.guarded_write(c, "w", b"x", step="one")
+    assert info.value.sent is None and info.value.total is None
+    assert "after" not in str(info.value).split("one")[-1]
+
+
+# ── when the link dropped ────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """session.perf_counter as a list the test moves."""
+    now = [100.0]
+    monkeypatch.setattr(session_mod, "perf_counter", lambda: now[0])
+    return now
+
+
+async def test_a_link_that_drops_by_itself_notes_when(client, clock):
+    trace = SessionTrace()
+    async with ble_session(FakeDevice(), trace=trace) as c:
+        clock[0] += 29.9996
+        c.drop()
+    assert trace.facts["link_dropped"] is True
+    assert trace.facts["dropped_after_s"] == 30.0
+    assert trace.as_dict()["dropped_after_s"] == 30.0
+
+
+async def test_a_session_that_closes_its_own_link_notes_no_drop(client, clock):
+    trace = SessionTrace()
+    async with ble_session(FakeDevice(), trace=trace):
+        clock[0] += 5
+    assert client.disconnects == 1  # the close fired the callback; it is not a drop
+    assert "link_dropped" not in trace.facts and "dropped_after_s" not in trace.facts
+
+
+async def test_a_connect_attempt_that_failed_before_the_link_came_up_is_not_a_drop(
+    monkeypatch, clock
+):
+    client = FakeClient()
+
+    async def connect(_cls, _device, _name, disconnected_callback=None, **_kwargs):
+        client.disconnected_callback = disconnected_callback
+        disconnected_callback(client)  # the attempt that failed
+        clock[0] += 3
+        return client
+
+    monkeypatch.setattr(session_mod, "establish_connection", connect)
+    trace = SessionTrace()
+    async with ble_session(FakeDevice(), trace=trace):
+        pass
+    assert "link_dropped" not in trace.facts
+
+
+async def test_a_drop_in_the_settle_is_a_drop_after_its_seconds(client, clock):
+    trace = SessionTrace()
+
+    async def drop_soon():
+        await asyncio.sleep(0.01)
+        clock[0] += 2.5
+        client.drop()
+
+    asyncio.get_running_loop().create_task(drop_soon())
+    with pytest.raises(ConnectFailed):
+        async with ble_session(FakeDevice(), trace=trace, settle_s=5):
+            pass
+    assert trace.facts["dropped_after_s"] == 2.5
+
+
+async def test_a_reused_link_reports_its_whole_lifetime_to_the_session_that_sees_the_drop(
+    client, clock
+):
+    first = SessionTrace()
+    async with ble_session(FakeDevice(), trace=first, keep=True) as c:
+        clock[0] += 10
+    assert "link_dropped" not in first.facts
+
+    clock[0] += 20
+    second = SessionTrace()
+    async with ble_session(FakeDevice(), trace=second, client=c, keep=True):
+        assert second.facts["reused"] is True
+        clock[0] += 1
+        c.drop()  # the callback belongs to the first call; the fact to this one
+    assert second.facts["link_dropped"] is True
+    assert second.facts["dropped_after_s"] == 31.0
+    assert "link_dropped" not in first.facts
+
+
+async def test_a_session_ending_on_a_kept_link_that_is_still_up_notes_no_drop(client, clock):
+    first = SessionTrace()
+    async with ble_session(FakeDevice(), trace=first, keep=True) as c:
+        pass
+    second = SessionTrace()
+    async with ble_session(FakeDevice(), trace=second, client=c):
+        clock[0] += 4
+    assert "link_dropped" not in first.facts and "link_dropped" not in second.facts
+
+
+async def test_a_drop_is_noted_whatever_the_block_raised(client, clock):
+    trace = SessionTrace()
+    with pytest.raises(RuntimeError):
+        async with ble_session(FakeDevice(), trace=trace) as c:
+            clock[0] += 7
+            c.drop()
+            raise RuntimeError("boom")
+    assert trace.facts["dropped_after_s"] == 7.0

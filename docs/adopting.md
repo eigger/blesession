@@ -251,15 +251,22 @@ Everything a session can put on a sensor, in the order it appears:
 | `rssi` | radio known | as that radio saw the device |
 | `paths` | radio lookup succeeds | connectable radios currently seeing it; `1` means no alternate visible route, not a count of free slots |
 | `advertised_via` | only when it differs | the loudest scanner, when the link took another |
+| `last_seen_s` | an advertisement was heard | seconds since any radio, connectable or not, last heard the device: asleep / gone, or in range and not connecting |
+| `paths_passive` | only when more than 0 | radios that hear the device but cannot connect to it (passive-only scanners) |
+| `slots_free` / `slots` | the radio tracks them | free and total connection slots of the radio `via` names |
 | `via_unconfirmed` | `via` not resolved from the link | `True`: no link (no connect, or one that failed) or a route habluetooth does not know, so `via` is only the loudest scanner |
+| `lock_wait_s` | `run_attempts(lock=...)` | seconds the attempt waited for the lock; first among the timings, and never `failed_stage` |
 | `connect_s`, `session_s`, `disconnect_s` | timed | seconds, in the order stages finished |
 | `unlock_s`, `readout_s`, … | timed | your own stages, same rule |
 | `reused` | `client=` reuse | the link was already up; there was no connect |
+| `link_dropped` / `dropped_after_s` | the link dropped by itself | `True` and the seconds from link-up to the drop: a steady ~30 s is a device idle timeout, a few seconds a bond or connection-parameter problem |
 | `disconnect_error` | close failed | the work was done; only the close failed |
+| `error_before_timeout` | the bound fired after a real error | what failed first; `error` is then the attempt timeout |
+| `timed_out_in` | the bound fired in another stage than `failed_stage` | where the cancellation actually landed (e.g. `disconnect`) |
 | `stale_close_error` | rare | closing a handed-in link that had gone stale failed |
 | `mtu` | backend reported one | ATT MTU, read before the session closes; placeholders are omitted |
 | `write_size`, `write_size_source` | you note `write_limit().facts()` | available write payload size and whether it came from the characteristic, MTU or your default |
-| your `note()` facts | always | `payload_bytes=…`, pacing counters, anything scalar |
+| your `note()` facts | always | `payload_bytes=…`, pacing counters, anything scalar; not a report key (`error`, `skipped`, `attempt`, …), which is skipped with a warning |
 
 A failed session at 3 am then reads off the entity without debug logging:
 
@@ -361,7 +368,8 @@ async with ble_session(device, client=self._client, keep=self._keep) as client:
 A handle that went stale is ignored and a fresh link opened, so you never
 check — and the session closes it, even if it reports itself down, rather than
 leaving it holding a proxy slot. A reused link times no `connect` stage
-and the trace notes `reused=True`.
+and the trace notes `reused=True`. A session cut by the attempt bound closes
+the link even with `keep=True`; the stale handle is then ignored.
 
 ## Testing, without bleak and without Home Assistant
 
@@ -434,7 +442,8 @@ in this repo is a working example.
    `except ConnectionError` maps them all; set `retryable=False` on the ones a
    retry cannot fix.
 6. Record every attempt into `SessionReports` from `on_attempt`, and
-   publish `last`, `last_failure` (with `failures` / `last_failure_at`) and,
+   publish `last`, `last_failure` (with `failures` / `last_failure_at`, and
+   `sessions` / `consecutive_failures` / `last_success_at` for a rate and a streak) and,
    if you want the evidence of a retried fault, `last_retry`; leave out a
    cancelled session and an expected failure (a device asleep).
 7. Write the device sentences you have as a `cause(failure)` callback — an

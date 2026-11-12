@@ -171,8 +171,43 @@ FACT_KEYS: tuple[str, ...] = (
     "paths",
     "advertised_via",
     "via_unconfirmed",
+    "last_seen_s",
+    "paths_passive",
+    "slots_free",
+    "slots",
 )
 """Radio facts, in report order (see blesession.hass.radio_facts)."""
+
+
+_RESERVED_WARNED: set[str] = set()
+
+
+def _without_reserved(facts: Mapping[str, Any], origin: str) -> dict[str, Any]:
+    """`facts` minus the report's own keys, which a fact must never touch.
+
+    `classify()` and `SessionReports` read `skipped`, `error`, `retrying`
+    from the report alone, so a `note(skipped=3)` or `note(error="crc retry")`
+    that overwrote them would turn a success into a skipped or failed session
+    and move the failure counters. The fact is dropped, not renamed: the
+    integration picks a key that is not reserved. One warning per key name
+    (debug after that), the way `_log_cause_error` does it, so the mistake is
+    in the ordinary log once and a poll loop does not flood it.
+    """
+    clean: dict[str, Any] = {}
+    for key, value in facts.items():
+        if key not in REPORT_KEYS:
+            clean[key] = value
+            continue
+        first = key not in _RESERVED_WARNED
+        _RESERVED_WARNED.add(key)
+        _LOGGER.log(
+            logging.WARNING if first else logging.DEBUG,
+            "Ignoring %r from %s: it is a report key (REPORT_KEYS) and a fact must not "
+            "overwrite it; use another name",
+            key,
+            origin,
+        )
+    return clean
 
 
 def build_report(
@@ -197,7 +232,7 @@ def build_report(
         error, failed_stage, failed_detail,                            # failures
         likely_cause, likely_cause_key, timed_out,
         attempt, attempts, retrying,                                   # retrying: only when true
-        via, via_type, rssi, paths, advertised_via,
+        via, via_type, rssi, paths, advertised_via, ...                # FACT_KEYS
         <stage>_s ...,                                                 # run order
         <trace facts> ...
 
@@ -222,6 +257,10 @@ def build_report(
     `Attempt.retrying`); the key is present only when true. `SessionReports`
     reads it to tell a failure being retried from the final one.
 
+    A key of `REPORT_KEYS` in `facts=` or in `trace.facts` never overwrites or
+    adds to the report's own: it is skipped, with a warning once per key name
+    (debug after that).
+
     A `cause` callback that raises does not fail the report: the error is
     logged as a warning once per callback (debug after that) and the generic
     sentence is used. A `Warning` it raises is not swallowed.
@@ -240,7 +279,7 @@ def build_report(
             stage = failed_stage
         if failed_detail is not None:
             detail = failed_detail
-        generic_key = cause_key(stage, error, exc=exc)
+        generic_key = cause_key(stage, error, exc=exc, facts=facts)
         report["error"] = error
         if stage is not None:
             report["failed_stage"] = stage
@@ -277,6 +316,7 @@ def build_report(
         report["attempts"] = attempts
     if retrying:
         report["retrying"] = True
+    facts = _without_reserved(facts, "facts=")
     for key in FACT_KEYS:
         if key in facts:
             report[key] = facts[key]
@@ -285,7 +325,7 @@ def build_report(
             report[key] = value
     for stage_name, seconds in trace.timings.items():
         report[f"{stage_name}_s"] = seconds
-    report.update(trace.facts)
+    report.update(_without_reserved(trace.facts, "trace.note()"))
     return report
 
 
@@ -384,6 +424,9 @@ class SessionReports:
         reports.last_failure         # survives the next success
         reports.failures             # how many sessions failed
         reports.last_failure_at      # when (UTC)
+        reports.sessions             # how many sessions finished (the denominator)
+        reports.consecutive_failures # failures since the last success
+        reports.last_success_at      # when the last session succeeded (UTC)
         reports.of("print")          # the latest report of one operation
 
     **Record every attempt, not just the one `run_attempts()` returns.** It
@@ -401,6 +444,14 @@ class SessionReports:
       write may still succeed, so it is not a failure; the evidence of the
       intermittent attempt is kept in `last_retry`.
     - `skipped` (a guard declined it) and `ok`: neither failure slot changes.
+
+    The counters read as a rate and a streak. `sessions` counts the sessions
+    that finished (`ok` and `failure`; a `retried` attempt is not the end of
+    one and a `skipped` one never ran), so `failures / sessions` is the failure
+    rate. `consecutive_failures` is the streak since the last `ok`: an `ok`
+    resets it, `retried` and `skipped` leave it alone. `last_success_at` is
+    when the last `ok` was recorded (UTC, like `last_failure_at`). `clear()`
+    resets all of them.
 
     Every kind becomes `last`. `last_failure` is kept until the next failure —
     a success must not erase the evidence, because the user who comes to
@@ -420,6 +471,9 @@ class SessionReports:
     last_retry: dict[str, Any] | None = None
     failures: int = 0
     last_failure_at: datetime | None = None
+    sessions: int = 0
+    consecutive_failures: int = 0
+    last_success_at: datetime | None = None
     by_operation_last: dict[str, dict[str, Any]] = field(default_factory=dict)
     _last_kind: Kind | None = field(default=None, init=False, repr=False, compare=False)
     _listeners: list[Callable[[], None]] = field(
@@ -450,6 +504,12 @@ class SessionReports:
             self.last_failure = report
             self.failures += 1
             self.last_failure_at = now or datetime.now(UTC)
+            self.sessions += 1
+            self.consecutive_failures += 1
+        elif kind == "ok":
+            self.sessions += 1
+            self.consecutive_failures = 0
+            self.last_success_at = now or datetime.now(UTC)
         elif kind == "retried":
             self.last_retry = report
         self._notify()
@@ -487,5 +547,8 @@ class SessionReports:
         self.last_retry = None
         self.failures = 0
         self.last_failure_at = None
+        self.sessions = 0
+        self.consecutive_failures = 0
+        self.last_success_at = None
         self.by_operation_last = {}  # reassigned, so a copy of this object is not cleared with it
         self._last_kind = None
