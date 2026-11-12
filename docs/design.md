@@ -610,8 +610,8 @@ fix is in `hass.py` and the stub moves with it.
 
 ## Current direction
 
-- **Versioning.** 0.x until a third integration is on it; integrations pin
-  an exact version in `manifest.json`. The rules (what is contract, what is
+- **Versioning.** 0.x until a third integration is on it; integrations declare
+  `"blesession"` in the `manifest.json` requirements. The rules (what is contract, what is
   a helper, what is internal-facing, and the deprecation step before a
   removal) are in [`contract.md` §1](contract.md); anything that changes a
   report key or a stage name is a minor bump and a CHANGELOG entry, because

@@ -21,11 +21,11 @@ retry.
 
 ```json
 {
-  "requirements": ["blesession==0.7.0"]
+  "requirements": ["blesession"]
 }
 ```
 
-Pin exactly, in `manifest.json`. Report keys, stage names and cause keys are
+Declare the dependency in `manifest.json`. Report keys, stage names and cause keys are
 a contract that troubleshooting docs quote, and until 1.0 a minor bump may
 change one; a shape that was released is removed only after a release that
 still accepts it with a `DeprecationWarning` ([`contract.md` §1](contract.md)).
