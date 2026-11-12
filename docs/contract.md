@@ -20,7 +20,7 @@ the code is worse than none.
 **Deprecation.** A shape that was in a release is removed only after a minor
 release that still accepts it and raises `DeprecationWarning`. The older
 `cause` shapes (§7) are the current example: accepted in 0.7, removed in 1.0.
-Pin exactly in `manifest.json` (`blesession==0.10.0`); a bump is then a
+Pin exactly in `manifest.json` (`blesession==0.7.0`); a bump is then a
 reviewed change, and the CHANGELOG says what it touches.
 
 ## 2. Public names

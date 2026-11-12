@@ -21,8 +21,8 @@ so any change to them is at least a minor bump and is listed here.
 
 ### Fixed
 
-- Updated adoption examples to pin 0.10.0 and use `write_limit()`; corrected
-  retryability, deadline and report-field explanations across the developer docs.
+- Updated the payload example to use `write_limit()` and corrected retryability,
+  deadline and report-field explanations across the developer docs.
   Refreshed the design document's guide links and historical rollout labels.
 - Included documentation screenshots in source distributions so the bundled
   installation guides retain their images.

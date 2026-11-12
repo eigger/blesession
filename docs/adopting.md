@@ -21,7 +21,7 @@ retry.
 
 ```json
 {
-  "requirements": ["blesession==0.10.0"]
+  "requirements": ["blesession==0.7.0"]
 }
 ```
 
