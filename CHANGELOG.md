@@ -48,6 +48,10 @@ so any change to them is at least a minor bump and is listed here.
 
 ### Added
 
+- English and Korean diagnostics implementation guidelines for integrations:
+  per-device report recording, entities and update notifications, a shared
+  download layout, redaction and adoption checks, including the new session
+  and radio observations and summary statistics.
 - Cause keys `connect.not_found`, `connect.aborted`, `unrecognised_answer` and
   `unreachable.passive_only` (see **Changed**), each with a sentence in `CAUSES`.
   `cause_key()` takes an optional `facts=` (the radio facts), and

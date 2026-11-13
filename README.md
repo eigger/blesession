@@ -25,6 +25,7 @@ Home Assistant (`pytest`).
 | learn about or set up a Bluetooth proxy | [user guide](docs/bluetooth.md) ([한국어](docs/bluetooth.ko.md)): how proxies work, hardware, installation, Home Assistant registration and connection checks; no library installation required |
 | troubleshoot a Bluetooth device | [common troubleshooting](docs/troubleshooting.md) ([한국어](docs/troubleshooting.ko.md)): discovery versus connection, failure stages, route facts and safe recovery; use with your integration’s device-specific guide |
 | integrate a device | [`docs/adopting.md`](docs/adopting.md): a whole integration end to end, what the library writes for you, how to test it without bleak or Home Assistant |
+| standardize an integration's diagnostics | [diagnostics implementation guide](docs/diagnostics.md) ([한국어](docs/diagnostics.ko.md)): recording, entities, updates, downloads, redaction and adoption checks |
 | know exactly what a call guarantees | [`docs/contract.md`](docs/contract.md): every public name, error, report key, cause key and callback shape, and the versioning rule |
 | understand why it is shaped this way | [`docs/design.md`](docs/design.md): what belongs here, what deliberately does not, how a Bluetooth-proxy route works without importing Home Assistant |
 | see what changed | [`CHANGELOG.md`](CHANGELOG.md) |
