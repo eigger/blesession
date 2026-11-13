@@ -13,6 +13,12 @@ so any change to them is at least a minor bump and is listed here.
 
 ## [Unreleased]
 
+### Added
+
+- Weekly Dependabot and CI checks, SHA-pinned workflow actions, explicit token
+  permissions and job timeouts. Release publishing validates the tag, package
+  version and main-branch ancestry. Added private security-reporting guidance.
+
 ## [0.10.0] — 2026-11-13
 
 ### Added
