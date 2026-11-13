@@ -13,38 +13,7 @@ so any change to them is at least a minor bump and is listed here.
 
 ## [Unreleased]
 
-### Changed
-
-- `keep=True` no longer hands back a link the library declared dead: when the
-  block is left by cancellation (the attempt bound), `ble_session()` closes the
-  link under the same bound, and a close that fails or times out marks the
-  link dropped, so `client=` with that handle opens a fresh one. Before, the
-  next session reused it (`reused=True`). A block that ends normally or with
-  an ordinary exception still keeps the link.
-- A `BleakError` from `guarded_write()` while the session's drop event is set
-  is now `SessionDropped` naming the step (`from` the original). One without a
-  drop still propagates unchanged.
-- `likely_cause_key` reads a failure whose text says "not connected" or
-  "disconnected" as `link_lost` in the `session`, `auth`, `transfer` and
-  `finish` stages. Before, a raw backend error got no cause. Connect-stage and
-  `disconnect`-stage failures read as before.
-
-- `likely_cause_key` tells more connect failures apart. A `ConnectFailed`
-  whose original error (`__cause__`) is `BleakNotFoundError` now reads
-  `connect.not_found`, and `BleakAbortedError` `connect.aborted`; both read
-  `connect.failed` before. `BleakOutOfConnectionSlotsError` reads
-  `connect.no_slot` by type, beside the "slot" text marker. `connect.settle`
-  and `connect.no_slot` keep their precedence over the two new keys.
-- A `NotificationTimeout` with `rejected` > 0 (notifications arrived and none
-  was accepted) in `auth`, `transfer` or `finish` reads `unrecognised_answer`;
-  it read `auth.no_answer` / `transfer.no_answer` / `finish.no_answer` before.
-  `WriteTimeout` still reads `write_timeout`. The default message of such a
-  timeout ends " (5 notifications arrived, none accepted)".
-- An `unreachable` failure whose facts show `paths` 0 (or absent) and
-  `paths_passive` > 0 reads `unreachable.passive_only`; it read `unreachable`
-  before.
-- Stage timings: with a `lock`, `run_attempts()` records the wait for it as
-  `lock_wait` first among them, so a report gains a leading `lock_wait_s`.
+## [0.10.0] — 2026-11-13
 
 ### Added
 
@@ -90,23 +59,6 @@ so any change to them is at least a minor bump and is listed here.
   board-specific installation preparation, illustrated installation screens,
   Home Assistant registration and the user-confirmed AtomS3U web installation route.
 
-### Fixed
-
-- A fact in `facts=` or `trace.note()` named like a report key (`REPORT_KEYS`:
-  `error`, `skipped`, `attempt`, ...) no longer overwrites it, which could
-  turn a success into a skipped or failed session. It is skipped, with a
-  warning once per key name (debug after that); other facts behave as before.
-- Tests read the docs as UTF-8, so the suite collects on a non-UTF-8 locale.
-- Updated the payload example to use `write_limit()` and corrected retryability,
-  deadline and report-field explanations across the developer docs.
-  Refreshed the design document's guide links and historical rollout labels.
-- Included documentation screenshots in source distributions so the bundled
-  installation guides retain their images.
-
-## [0.10.0] — 2026-11-01
-
-### Added
-
 - `write_limit(client, char=None, *, response=False, default=20)` and
   `WriteLimit(size, mtu, source)`: the payload one write can carry, taken from
   the characteristic's limit, else the reported MTU less the 3-byte ATT header,
@@ -119,6 +71,37 @@ so any change to them is at least a minor bump and is listed here.
 
 ### Changed
 
+- `keep=True` no longer hands back a link the library declared dead: when the
+  block is left by cancellation (the attempt bound), `ble_session()` closes the
+  link under the same bound, and a close that fails or times out marks the
+  link dropped, so `client=` with that handle opens a fresh one. Before, the
+  next session reused it (`reused=True`). A block that ends normally or with
+  an ordinary exception still keeps the link.
+- A `BleakError` from `guarded_write()` while the session's drop event is set
+  is now `SessionDropped` naming the step (`from` the original). One without a
+  drop still propagates unchanged.
+- `likely_cause_key` reads a failure whose text says "not connected" or
+  "disconnected" as `link_lost` in the `session`, `auth`, `transfer` and
+  `finish` stages. Before, a raw backend error got no cause. Connect-stage and
+  `disconnect`-stage failures read as before.
+
+- `likely_cause_key` tells more connect failures apart. A `ConnectFailed`
+  whose original error (`__cause__`) is `BleakNotFoundError` now reads
+  `connect.not_found`, and `BleakAbortedError` `connect.aborted`; both read
+  `connect.failed` before. `BleakOutOfConnectionSlotsError` reads
+  `connect.no_slot` by type, beside the "slot" text marker. `connect.settle`
+  and `connect.no_slot` keep their precedence over the two new keys.
+- A `NotificationTimeout` with `rejected` > 0 (notifications arrived and none
+  was accepted) in `auth`, `transfer` or `finish` reads `unrecognised_answer`;
+  it read `auth.no_answer` / `transfer.no_answer` / `finish.no_answer` before.
+  `WriteTimeout` still reads `write_timeout`. The default message of such a
+  timeout ends " (5 notifications arrived, none accepted)".
+- An `unreachable` failure whose facts show `paths` 0 (or absent) and
+  `paths_passive` > 0 reads `unreachable.passive_only`; it read `unreachable`
+  before.
+- Stage timings: with a `lock`, `run_attempts()` records the wait for it as
+  `lock_wait` first among them, so a report gains a leading `lock_wait_s`.
+
 - Every report from a session that reached its block now carries an `mtu` fact
   when the backend reported the ATT MTU. It is read at the end of the session,
   before the close, because right after connecting BlueZ still answers a
@@ -126,6 +109,19 @@ so any change to them is at least a minor bump and is listed here.
   one. The key is added after the integration's own `note()` facts; an
   integration that already notes `mtu` keeps its key position and gets the
   end-of-session value.
+
+### Fixed
+
+- A fact in `facts=` or `trace.note()` named like a report key (`REPORT_KEYS`:
+  `error`, `skipped`, `attempt`, ...) no longer overwrites it, which could
+  turn a success into a skipped or failed session. It is skipped, with a
+  warning once per key name (debug after that); other facts behave as before.
+- Tests read the docs as UTF-8, so the suite collects on a non-UTF-8 locale.
+- Updated the payload example to use `write_limit()` and corrected retryability,
+  deadline and report-field explanations across the developer docs.
+  Refreshed the design document's guide links and historical rollout labels.
+- Included documentation screenshots in source distributions so the bundled
+  installation guides retain their images.
 
 ## [0.9.1] — 2026-11-01
 
