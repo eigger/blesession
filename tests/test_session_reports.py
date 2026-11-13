@@ -369,3 +369,92 @@ def test_a_cause_callback_error_is_a_warning_once_and_a_deprecation_is_not_swall
         warnings.simplefilter("error")
         with pytest.raises(DeprecationWarning):
             build_report(operation="w", trace=SessionTrace(), exc=ConnectFailed("x"), cause=legacy)
+
+
+def test_a_note_cannot_overwrite_a_report_key(caplog):
+    """`note(skipped=3)` once made a successful session classify as skipped."""
+    trace = SessionTrace()
+    trace.note(skipped=3, error="crc retry", attempt=9, parts=2)
+    report = build_report(operation="poll", trace=trace, attempt=1, attempts=2)
+    assert report["success"] is True
+    assert "skipped" not in report and "error" not in report
+    assert report["attempt"] == 1 and report["parts"] == 2
+    assert classify(report) == "ok"
+    reports = SessionReports()
+    reports.record(report)
+    assert reports.failures == 0
+
+
+def test_facts_cannot_overwrite_a_report_key():
+    report = build_report(
+        operation="poll", trace=SessionTrace(), attempt=2, facts={"attempt": 7, "kept": 1}
+    )
+    assert report["attempt"] == 2 and report["kept"] == 1
+
+
+def test_a_reserved_key_warns_once_per_name_then_debugs(caplog):
+    from blesession import report as report_mod
+
+    report_mod._RESERVED_WARNED.discard("retrying")
+    trace = SessionTrace()
+    trace.note(retrying=True)
+    with caplog.at_level(logging.DEBUG, logger="blesession.report"):
+        build_report(operation="a", trace=trace)
+        build_report(operation="b", trace=trace)
+    levels = [r.levelno for r in caplog.records if "'retrying'" in r.getMessage()]
+    assert levels == [logging.WARNING, logging.DEBUG]
+
+
+def _ok():
+    return {"operation": "w", "success": True}
+
+
+def _fail(**extra):
+    return {"operation": "w", "success": False, "error": "x", **extra}
+
+
+def test_sessions_count_finished_sessions_only():
+    reports = SessionReports()
+    assert (reports.sessions, reports.consecutive_failures, reports.last_success_at) == (0, 0, None)
+    reports.record(_ok())
+    reports.record(_fail())
+    assert reports.sessions == 2
+    reports.record(_fail(retrying=True))  # another attempt follows: not the end of one
+    reports.record({"operation": "w", "success": False, "skipped": "locked"})  # never ran
+    assert reports.sessions == 2
+    assert reports.failures == 1
+
+
+def test_consecutive_failures_are_a_streak_an_ok_resets():
+    reports = SessionReports()
+    reports.record(_fail())
+    reports.record(_fail())
+    assert reports.consecutive_failures == 2
+    reports.record(_fail(retrying=True))
+    reports.record({"operation": "w", "success": False, "skipped": "locked"})
+    assert reports.consecutive_failures == 2  # untouched by retried / skipped
+    reports.record(_ok())
+    assert reports.consecutive_failures == 0
+    reports.record(_fail())
+    assert reports.consecutive_failures == 1 and reports.failures == 3
+
+
+def test_last_success_at_is_utc_and_honours_now():
+    reports = SessionReports()
+    when = datetime(2001, 2, 3, 4, 5, tzinfo=UTC)
+    reports.record(_ok(), now=when)
+    assert reports.last_success_at == when
+    reports.record(_fail())
+    reports.record({"operation": "w", "success": False, "skipped": "locked"})
+    assert reports.last_success_at == when  # only an ok moves it
+    reports.record(_ok())
+    assert reports.last_success_at.tzinfo is UTC and reports.last_success_at > when
+    assert reports.last_failure_at is not None and reports.last_failure_at.tzinfo is UTC
+
+
+def test_clear_resets_the_new_counters():
+    reports = SessionReports()
+    reports.record(_ok())
+    reports.record(_fail())
+    reports.clear()
+    assert (reports.sessions, reports.consecutive_failures, reports.last_success_at) == (0, 0, None)

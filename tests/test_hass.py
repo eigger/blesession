@@ -27,9 +27,17 @@ ADDRESS = "AA:BB:CC:DD:EE:FF"
 class StubScanner:
     """A BaseHaScanner: a name, and what it last saw."""
 
+    allocations = None
+    """What get_allocations() returns; an Exception instance is raised."""
+
     def __init__(self, name, rssi=None):
         self.name = name
         self.rssi = rssi
+
+    def get_allocations(self):
+        if isinstance(self.allocations, Exception):
+            raise self.allocations
+        return self.allocations
 
     def get_discovered_device_advertisement_data(self, address):
         if self.rssi is None:
@@ -45,6 +53,7 @@ class DeafScanner(StubScanner):
     """A scanner build that has no advertisement lookup at all."""
 
     get_discovered_device_advertisement_data = None
+    get_allocations = None  # and no slot accounting either
 
     def __getattr__(self, name):
         raise AttributeError(name)
@@ -55,8 +64,10 @@ def bluetooth(monkeypatch):
     """Stand `homeassistant.components.bluetooth` up in sys.modules.
 
     Tests set `.scanners` (source id -> scanner), `.strongest` (what
-    async_last_service_info returns) and `.reaching` (how many connectable
-    scanners see the address).
+    async_last_service_info returns), `.reaching` (how many connectable
+    scanners see the address), `.passive` (how many more, non-connectable,
+    hear it) and `.heard` (what async_last_service_info returns when asked for
+    any radio, connectable or not; `.strongest` when unset).
     """
     module = types.ModuleType("homeassistant.components.bluetooth")
     module.BaseHaScanner = StubScanner
@@ -64,12 +75,16 @@ def bluetooth(monkeypatch):
     module.scanners = {}
     module.strongest = None
     module.reaching = 1
+    module.passive = 0
+    module.heard = None
     module.device = FakeDevice(ADDRESS)
 
     module.async_scanner_by_source = lambda _hass, source: module.scanners.get(source)
-    module.async_last_service_info = lambda _hass, _address, connectable=True: module.strongest
+    module.async_last_service_info = lambda _hass, _address, connectable=True: (
+        module.strongest if connectable or module.heard is None else module.heard
+    )
     module.async_scanner_devices_by_address = lambda _hass, _address, connectable=True: (
-        [object()] * module.reaching
+        [object()] * (module.reaching + (0 if connectable else module.passive))
     )
     module.async_ble_device_from_address = lambda _hass, _address, connectable=True: module.device
 
@@ -209,3 +224,176 @@ def test_a_lookup_that_raises_yields_no_facts_not_an_exception(bluetooth, radio_
 
     bluetooth.async_scanner_devices_by_address = boom
     assert radio_facts() == {}
+
+
+@pytest.fixture
+def now(monkeypatch):
+    """The clock a service info's `time` is stamped with, as a one-item list."""
+    import blesession.hass as hass_mod
+
+    clock = [1000.0]
+    monkeypatch.setattr(hass_mod, "_monotonic_now", lambda: clock[0])
+    return clock
+
+
+def test_last_seen_is_the_age_of_the_advertisement_any_radio_heard(bluetooth, radio_facts, now):
+    bluetooth.heard = types.SimpleNamespace(source="office", time=957.25)
+
+    assert radio_facts()["last_seen_s"] == 42.8  # one decimal; the clock is coarse anyway
+
+
+def test_last_seen_asks_for_any_radio_not_only_connectable_ones(bluetooth, radio_facts, now):
+    bluetooth.strongest = types.SimpleNamespace(source="office", time=999.0)
+    bluetooth.heard = types.SimpleNamespace(source="passive", time=990.0)
+
+    assert radio_facts()["last_seen_s"] == 10.0
+
+
+def test_last_seen_is_left_out_when_it_cannot_be_determined(bluetooth, radio_facts, now):
+    assert "last_seen_s" not in radio_facts()  # no advertisement at all
+    bluetooth.heard = types.SimpleNamespace(source="office")  # a build with no `time`
+    assert "last_seen_s" not in radio_facts()
+    bluetooth.heard = types.SimpleNamespace(source="office", time=None)
+    assert "last_seen_s" not in radio_facts()
+
+
+def test_last_seen_is_never_negative(bluetooth, radio_facts, now):
+    bluetooth.heard = types.SimpleNamespace(source="office", time=1000.4)  # coarse clock skew
+
+    assert radio_facts()["last_seen_s"] == 0.0
+
+
+def test_last_seen_is_left_out_without_the_clock(bluetooth, radio_facts, monkeypatch):
+    import blesession.hass as hass_mod
+
+    monkeypatch.setattr(hass_mod, "_monotonic_now", lambda: None)
+    bluetooth.heard = types.SimpleNamespace(source="office", time=1.0)
+
+    assert "last_seen_s" not in radio_facts()
+
+
+def test_the_clock_is_the_one_habluetooth_stamps_with(monkeypatch):
+    """bluetooth_data_tools is habluetooth's dependency, not ours: fake it."""
+    import blesession.hass as hass_mod
+
+    fake = types.ModuleType("bluetooth_data_tools")
+    fake.monotonic_time_coarse = lambda: 123  # the real one may hand back an int
+    monkeypatch.setitem(sys.modules, "bluetooth_data_tools", fake)
+
+    now = hass_mod._monotonic_now()
+
+    assert now == 123.0 and isinstance(now, float)
+
+
+def test_there_is_no_clock_without_bluetooth_data_tools(bluetooth, radio_facts, monkeypatch):
+    import blesession.hass as hass_mod
+
+    monkeypatch.setitem(sys.modules, "bluetooth_data_tools", None)  # import raises ImportError
+    bluetooth.heard = types.SimpleNamespace(source="office", time=1.0)
+
+    assert hass_mod._monotonic_now() is None
+    assert "last_seen_s" not in radio_facts()  # simply absent, nothing else lost
+
+
+def test_passive_radios_are_counted_beside_the_connectable_ones(bluetooth, radio_facts):
+    bluetooth.reaching = 0
+    bluetooth.passive = 2
+
+    assert radio_facts() == {"paths": 0, "paths_passive": 2}
+
+
+def test_paths_keeps_meaning_connectable_radios(bluetooth, radio_facts):
+    bluetooth.reaching = 1
+    bluetooth.passive = 1
+
+    facts = radio_facts()
+
+    assert facts["paths"] == 1 and facts["paths_passive"] == 1
+
+
+def test_no_passive_radio_leaves_the_fact_out(bluetooth, radio_facts):
+    bluetooth.passive = 0
+
+    assert "paths_passive" not in radio_facts()
+
+
+def test_the_slots_of_the_radio_reported_as_via(bluetooth, radio_facts):
+    took = StubProxy("living-room-proxy", rssi=-71)
+    took.allocations = types.SimpleNamespace(adapter="x", slots=3, free=1, allocated=["a", "b"])
+
+    facts = radio_facts(LinkInfo(via=took))
+
+    assert facts["slots_free"] == 1 and facts["slots"] == 3
+
+
+def test_slots_are_left_out_when_the_radio_cannot_say(bluetooth, radio_facts):
+    for allocations in (None, RuntimeError("proxy went away"), types.SimpleNamespace(free=1)):
+        scanner = StubProxy("p", rssi=-60)
+        scanner.allocations = allocations
+        facts = radio_facts(LinkInfo(via=scanner))
+        assert "slots" not in facts and "slots_free" not in facts
+        assert facts["via"] == "p"  # the other facts survive
+
+
+def test_a_scanner_without_get_allocations_loses_only_the_slots(bluetooth, radio_facts):
+    facts = radio_facts(LinkInfo(via=DeafScanner("old-habluetooth")))
+
+    assert facts == {"via": "old-habluetooth", "via_type": "adapter", "paths": 1}
+
+
+def test_an_old_home_assistant_lacking_the_lookups_loses_only_those_facts(
+    bluetooth, radio_facts, now, monkeypatch
+):
+    """`last_seen_s` and `paths_passive` ask for any radio; if that raises the
+    rest of the facts still stand."""
+
+    def boom(_hass, _address, connectable=True):
+        if not connectable:
+            raise TypeError("connectable is not a parameter here")
+        return bluetooth.strongest
+
+    bluetooth.async_last_service_info = boom
+    real = bluetooth.async_scanner_devices_by_address
+
+    def devices(hass, address, connectable=True):
+        if not connectable:
+            raise TypeError("no")
+        return real(hass, address, connectable=connectable)
+
+    bluetooth.async_scanner_devices_by_address = devices
+
+    assert radio_facts(LinkInfo(via=StubProxy("p", rssi=-60))) == {
+        "via": "p",
+        "via_type": "proxy",
+        "rssi": -60,
+        "paths": 1,
+    }
+
+
+def test_the_new_facts_are_report_facts_in_a_fixed_place():
+    from blesession import FACT_KEYS
+
+    assert FACT_KEYS[:6] == (
+        "via",
+        "via_type",
+        "rssi",
+        "paths",
+        "advertised_via",
+        "via_unconfirmed",
+    )
+    assert FACT_KEYS[6:] == ("last_seen_s", "paths_passive", "slots_free", "slots")
+
+
+def test_passive_only_radios_become_the_unreachable_reading_in_a_report(bluetooth, radio_facts):
+    from blesession import SessionTrace, build_report
+
+    bluetooth.reaching = 0
+    bluetooth.passive = 1
+    facts = radio_facts()
+    report = build_report(
+        operation="poll", trace=SessionTrace(), exc=Unreachable(ADDRESS), facts=facts, noun="tag"
+    )
+
+    assert report["likely_cause_key"] == "unreachable.passive_only"
+    assert report["paths_passive"] == 1 and "connectable adapter" in report["likely_cause"]
+    assert list(report).index("paths") < list(report).index("paths_passive")

@@ -7,6 +7,7 @@ so the integration can publish it as sensor attributes.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from functools import wraps
@@ -43,6 +44,7 @@ class SessionTrace:
         self._timings: dict[str, float] = {}
         self._stack: list[str] = []
         self.failed_stage: str | None = None
+        self._interrupted_stage: str | None = None
         self.facts: dict[str, Any] = {}
         self.link: LinkInfo | None = None
         """Which radio the link went over, set by ble_session() after connecting."""
@@ -61,11 +63,13 @@ class SessionTrace:
         started = perf_counter()
         try:
             yield
-        except BaseException:
+        except BaseException as exc:
             # BaseException so a cancellation (the attempt bound) is
             # attributed to the stage it interrupted.
             if self.failed_stage is None:
                 self.failed_stage = name
+            if isinstance(exc, asyncio.CancelledError) and self._interrupted_stage is None:
+                self._interrupted_stage = name
             raise
         finally:
             self._stack.pop()
@@ -94,6 +98,18 @@ class SessionTrace:
         """
         if name is None or self.failed_stage == name:
             self.failed_stage = None
+
+    @property
+    def interrupted_stage(self) -> str | None:
+        """The innermost stage a cancellation first escaped from, or None.
+
+        What the attempt bound actually interrupted. It can differ from
+        `failed_stage` (the first failure wins): a `SessionDropped` in
+        `transfer` followed by a close that outlasts the bound leaves
+        `failed_stage` at `transfer` and this at `disconnect`. Read-only;
+        `forgive()` does not touch it, because the cancellation happened.
+        """
+        return self._interrupted_stage
 
     @property
     def failed_primary(self) -> str | None:

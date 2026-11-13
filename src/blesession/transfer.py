@@ -13,6 +13,7 @@ from collections.abc import Callable
 from typing import Any
 
 from bleak import BleakClient
+from bleak.exc import BleakError
 
 from .errors import SessionDropped, WriteTimeout
 from .session import dropped_event
@@ -43,7 +44,8 @@ async def guarded_write(
 
     A link already down raises `SessionDropped` naming `step` (`phase` says
     whether that was "before" or "during" it), instead of whatever the backend
-    raises for a write to a dead link; a write that does not return within
+    raises for a write to a dead link, and so does a write that fails with a
+    `BleakError` once the drop event is set; a write that does not return within
     `timeout` raises `WriteTimeout` naming `step`. `dropped` defaults to the
     event `ble_session()` registered for `client`.
 
@@ -65,6 +67,27 @@ async def guarded_write(
         _raise_if_dropped(dropped, step, "during")
         assert timeout is not None
         raise WriteTimeout(timeout, step=step) from exc
+    except BleakError as exc:
+        # The backend's words for a write to a link that went away. When the
+        # session knows the link dropped, say so by name rather than hand the
+        # integration a raw error that reads as no particular cause; any other
+        # BleakError is the backend's own and goes through unchanged.
+        if dropped is not None and dropped.is_set():
+            raise SessionDropped(f"The link dropped during {step}", detail=step) from exc
+        raise
+
+
+def _say_how_far(exc: SessionDropped | WriteTimeout, sent: int, total: int) -> None:
+    """Put the transfer's progress on `exc`: `sent`/`total` and the message.
+
+    A report that says only "the link dropped during upload" leaves open
+    whether that was the first write or the last; this closes it. Done once:
+    an error that already carries its progress keeps it.
+    """
+    if exc.sent is not None:
+        return
+    exc.sent, exc.total = sent, total
+    exc.args = (f"{exc} (after {sent}/{total} writes)", *exc.args[1:])
 
 
 async def write_chunks(
@@ -90,30 +113,39 @@ async def write_chunks(
     Each write goes through `guarded_write()`: a link that is down ends the
     transfer with `SessionDropped` naming `step`, and a write that does not
     return within `write_timeout` (default `WRITE_TIMEOUT_S`, `None` for no
-    bound) with `WriteTimeout`. An empty `data` writes nothing.
+    bound) with `WriteTimeout`. Either one raised part-way says how far the
+    transfer got: its `sent` and `total` are the writes completed and the writes
+    the payload needed, and its message ends " (after 37/120 writes)". A failure
+    before the first write reads 0/N. Any other error propagates unchanged.
+    An empty `data` writes nothing.
     """
     if size < 1:
         raise ValueError(f"size must be at least 1, not {size}")
     dropped = dropped_event(client)
+    total = -(-len(data) // size)  # the writes the payload needs
     sent = 0
-    for offset in range(0, len(data), size):
-        _raise_if_dropped(dropped, step, "during")  # before framing a chunk nobody will send
-        chunk = data[offset : offset + size]
-        if wrap is not None:
-            chunk = wrap(offset, chunk)
-        await guarded_write(
-            client,
-            characteristic,
-            chunk,
-            step=step,
-            response=response,
-            timeout=write_timeout,
-            dropped=dropped,
-            phase="during",
-        )
-        sent += 1
-        if on_chunk is not None:
-            on_chunk(sent)
-        if gap_s > 0:
-            await asyncio.sleep(gap_s)
+    try:
+        for offset in range(0, len(data), size):
+            _raise_if_dropped(dropped, step, "during")  # before framing a chunk nobody will send
+            chunk = data[offset : offset + size]
+            if wrap is not None:
+                chunk = wrap(offset, chunk)
+            await guarded_write(
+                client,
+                characteristic,
+                chunk,
+                step=step,
+                response=response,
+                timeout=write_timeout,
+                dropped=dropped,
+                phase="during",
+            )
+            sent += 1
+            if on_chunk is not None:
+                on_chunk(sent)
+            if gap_s > 0:
+                await asyncio.sleep(gap_s)
+    except (SessionDropped, WriteTimeout) as exc:
+        _say_how_far(exc, sent, total)
+        raise
     return sent

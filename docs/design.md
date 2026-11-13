@@ -124,7 +124,12 @@ The connect wraps any bleak error in `ConnectFailed`; a drop during
 The session also **watches the link for its whole duration**. It passes its
 own `disconnected_callback` to `establish_connection` (chaining the
 caller's, if any) and registers the resulting event under the client, where
-`dropped_event(client)` finds it. That is what lets a notification wait end
+`dropped_event(client)` finds it. Beside it, per client, sits when the link
+came up and when it dropped on its own: a drop before the session's own close
+is noted as `link_dropped` and `dropped_after_s` (the link's lifetime, so a
+steady ~30 s reads as a device idle timeout and a few seconds as a bond or
+connection-parameter problem). It is keyed by client rather than held in one
+call because a reused link's callback belongs to the session that opened it. That is what lets a notification wait end
 when the link ends rather than when its timeout runs out (§2); `settle_s`
 uses the same event, falling back to polling `is_connected` for a backend
 that never fires a callback.
@@ -137,7 +142,11 @@ Rules, all of which at least one integration currently gets differently:
   failure never masks the original exception. It is logged at debug, not
   warning.
 - Once the client has been handed to the caller, `keep=True` skips the
-  disconnect and the caller owns the link. A failure during connect or
+  disconnect and the caller owns the link — unless the block is left by
+  cancellation, which is how the attempt bound arrives: the library has just
+  declared that link dead, so it is closed under the same bound (a close that
+  fails or times out marks the link dropped, so a caller still holding the
+  handle gets a fresh link from `client=`, not a reuse). A failure during connect or
   post-connect settle happens before handoff, so that connection is closed
   even with `keep=True`. `client=` hands a kept link back for the next session:
 
@@ -209,6 +218,8 @@ async with Notifications(client, NOTIFY_UUID, settle=0.5) as replies:
   `stop_notify_best_effort()`, which is public for the subscription an
   integration makes itself (a handoff between stages, a pairing exchange):
   the same cleanup rule, not a second one.
+- A `SessionDropped` or `WriteTimeout` out of `write_chunks()` says how far
+  it got: `sent` / `total` writes, and " (after 37/120 writes)" on the message.
 - `write_chunks(client, uuid, data, size, step=)` is the chunk loop for a
   payload larger than one write. The device keeps the chunk size, the gap,
   acknowledged or not, and the framing (`wrap`); the library keeps the
@@ -297,6 +308,10 @@ fixes is the **contract**:
   when the job was queued may be stale after the wait.
 - Guards that can change while waiting for the lock (write lock, superseded
   job, duplicate payload) run under the lock, before the attempt.
+- How long an attempt waited for the lock is recorded as the stage timing
+  `lock_wait` (`lock_wait_s` in the report), ahead of the other timings, so a
+  user who waited 40 s does not read stage timings that add up to 7. It is
+  recorded, not timed as a stage: it never becomes `failed_stage`.
 
 ```python
 last = await run_attempts(
@@ -361,6 +376,16 @@ facts = radio_facts(hass, address, trace.link)
   setups the radio that holds the bond)
 - `via_unconfirmed` — true when `via` is based on an advertisement rather
   than a scanner resolved from the actual link
+- `last_seen_s` — seconds since any radio, connectable or not, last heard
+  the device (habluetooth stamps advertisements with `monotonic_time_coarse()`,
+  so the age is that clock minus the service info's `time`)
+- `paths_passive` — radios that hear the device but cannot connect to it
+  (non-connectable scanners); only when more than 0
+- `slots_free`, `slots` — the connection slots of the radio `via` names, from
+  the scanner's `get_allocations()` when it has one and it answers
+
+Each of the last three is probed on its own and left out when the installed
+Home Assistant or habluetooth lacks the API.
 
 `link.connected_via(client)` is the single place that probes private
 attributes, in order: `client._connected_scanner` (habluetooth's wrapper),
@@ -399,7 +424,8 @@ error, failed_stage, failed_detail,                              # failures only
 likely_cause, likely_cause_key, timed_out,
 attempt, attempts, retrying,
 via, via_type, rssi, paths, advertised_via, via_unconfirmed,
-<stage>_s ...,                                                     # run order
+last_seen_s, paths_passive, slots_free, slots,
+<stage>_s ...,                                                     # lock_wait_s first                                                     # run order
 <note facts> ...                            # incl. disconnect_error, if any
 ```
 
@@ -439,7 +465,9 @@ went on to succeed is kept as evidence without counting as a failure.
   duration/timestamp sensor's attributes
 - **last failure** — kept until the next failure, so a success does not
   erase the evidence: the user who comes to read it has usually had a
-  working session since; `failures` and `last_failure_at` count them
+  working session since; `failures` and `last_failure_at` count them, and
+  `sessions` (finished sessions: `ok` and `failure`),
+  `consecutive_failures` and `last_success_at` give the rate and the recency
 - **last retry** — a failed attempt another attempt followed, kept as
   evidence of an intermittent fault; not a failure
 - **`of(operation)`** — the latest report of one operation, for a sensor that
@@ -451,7 +479,8 @@ was held" — `classify()` puts `skipped` first, then `error`, not `success`.
 
 ### 9. Generic likely-cause sentences — `causes.py`
 
-Two halves. `cause_key(stage, error, exc=...)` picks *which* reading a
+Two halves. `cause_key(stage, error, exc=..., facts=...)` (`facts`, the radio
+facts, is optional) picks *which* reading a
 failure gets and returns a stable name for it; `CAUSES` maps that name to
 the English sentence, with `{noun}` and `{where}` filled in.
 `generic_cause()` is the pair rendered, and the report carries both — the
@@ -473,8 +502,17 @@ integration's own table takes over:
 
 - weak signal placement: `rssi <= -85`, plus "and no other radio reaches
   the {noun}" when `paths == 1`
-- `connect` + "slot" → the proxy has no free connection slot
-- `unreachable` → no radio sees it: range, asleep, battery, adapter down
+- `connect` + `BleakOutOfConnectionSlotsError` or "slot" → the proxy has no
+  free connection slot; `BleakNotFoundError` → it stopped advertising
+  between lookup and connect (`connect.not_found`); `BleakAbortedError` →
+  aborted, typically interference (`connect.aborted`). The original is the
+  `ConnectFailed`'s `__cause__`; a settle drop keeps `connect.settle`
+- `unreachable` → no radio sees it: range, asleep, battery, adapter down;
+  with `paths` 0 or absent and `paths_passive` > 0 → radios hear it but none
+  can connect (`unreachable.passive_only`)
+- a `NotificationTimeout` with `rejected` > 0 in `auth`, `transfer` or
+  `finish` → frames arrived and none was accepted: another model or
+  firmware, or replies to an earlier request (`unrecognised_answer`)
 - `session` → dropped or refused before the protocol started; if it
   repeats, the model/profile may not match
 - a `GattMismatch` in any stage → the device lacks the service,

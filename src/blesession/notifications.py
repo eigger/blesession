@@ -190,17 +190,24 @@ class Notifications:
         """The first notification `accept` returns True for, within `timeout` overall.
 
         `accept` may raise to turn an error frame into the session's failure.
+        A timeout counts the frames `accept` turned down
+        (`NotificationTimeout.rejected`).
         """
         timeout_scope = asyncio.timeout(timeout)
+        rejected = 0
         try:
             async with timeout_scope:
                 while True:
                     data = await self._next(step)
                     if accept(data):
                         return data
+                    rejected += 1
         except TimeoutError as exc:
             if timeout_scope.expired():
-                raise NotificationTimeout(timeout, step=step) from exc
+                # The count rides on the error: frames that came and were all
+                # turned down are a device answering something unrecognised,
+                # not a silent one.
+                raise NotificationTimeout(timeout, step=step, rejected=rejected) from exc
             raise
 
     def _requeue_first(self, data: bytes) -> None:

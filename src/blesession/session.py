@@ -37,6 +37,46 @@ _SETTLE_POLL_STEP_S = 0.25
 _DROPPED: WeakKeyDictionary[Any, asyncio.Event] = WeakKeyDictionary()
 
 
+class _LinkClock:
+    """When one link came up and when it went away on its own.
+
+    Kept per client beside `_DROPPED`, not in one `ble_session()` call: a
+    `keep=True` link outlives the call that opened it, and the disconnect
+    callback (which stamps the drop) belongs to that first call while a later
+    session on the link is the one that reports it.
+
+    `closing` is set before the session's own close, so neither the close nor
+    a drop that only follows from it is taken for the link failing by itself.
+    Before the link is up (`up_at` is None) nothing counts: a connect attempt
+    that failed inside `establish_connection` can fire the callback for a
+    link that never was.
+    """
+
+    __slots__ = ("closing", "dropped_at", "up_at")
+
+    def __init__(self) -> None:
+        self.up_at: float | None = None
+        self.dropped_at: float | None = None
+        self.closing = False
+
+    def came_up(self) -> None:
+        self.up_at = perf_counter()
+        self.dropped_at = None
+
+    def dropped(self) -> None:
+        if self.up_at is not None and self.dropped_at is None and not self.closing:
+            self.dropped_at = perf_counter()
+
+    def facts(self) -> dict[str, Any]:
+        """`link_dropped` and `dropped_after_s` when the link dropped on its own."""
+        if self.closing or self.up_at is None or self.dropped_at is None:
+            return {}
+        return {"link_dropped": True, "dropped_after_s": round(self.dropped_at - self.up_at, 3)}
+
+
+_LINKS: WeakKeyDictionary[Any, _LinkClock] = WeakKeyDictionary()
+
+
 def current_client_class() -> type[BleakClient]:
     """The BleakClient to connect with, looked up at connect time.
 
@@ -67,6 +107,13 @@ def dropped_event(client: Any) -> asyncio.Event | None:
 def _watch_drops(client: Any, dropped: asyncio.Event) -> None:
     with contextlib.suppress(TypeError):
         _DROPPED[client] = dropped
+
+
+def _link_clock(client: Any) -> _LinkClock | None:
+    try:
+        return _LINKS.get(client)
+    except TypeError:  # a client that cannot be weak-referenced
+        return None
 
 
 def still_up(client: BleakClient | None) -> bool:
@@ -122,7 +169,12 @@ async def ble_session(
                    devices whose encryption settles after the L2CAP link is up;
                    a drop during the settle raises ConnectFailed(detail="settle")
     `keep`         leave the link up on exit (printers' keep_connection); the
-                   caller owns it from then on
+                   caller owns it from then on. Not when the block is left by
+                   cancellation, which is how the attempt bound arrives: the
+                   library has declared that link dead, so it is closed (same
+                   bound) and a later `client=` with that handle opens a fresh
+                   one — a close that failed or timed out marks the link
+                   dropped so `still_up()` says no.
     `close_stale`  bleak_retry_connector.close_stale_connections_by_address
                    before connecting
     `connect_kwargs`  passed to establish_connection (use_services_cache,
@@ -150,6 +202,7 @@ async def ble_session(
     address = ble_device.address
     reused = client if still_up(client) else None
     handed_off = False
+    cancelled = False
     # A handle `still_up` turned down is this function's to close, not the
     # caller's, whatever its `is_connected` says: they are about to overwrite
     # their reference with the client we hand back, and a link a proxy still
@@ -157,12 +210,16 @@ async def ble_session(
     turned_down = client if reused is None and client is not None else None
     client = reused
     dropped = asyncio.Event()
+    # A reused link has its clock already (and a callback bound to it); one
+    # opened elsewhere has none, and then reports no drop facts.
+    clock = (_link_clock(reused) if reused is not None else None) or _LinkClock()
     caller_callback: Callable[[Any], None] | None = connect_kwargs.pop(
         "disconnected_callback", None
     )
 
     def on_disconnect(disconnected: Any) -> None:
         dropped.set()
+        clock.dropped()
         if caller_callback is not None:
             caller_callback(disconnected)
 
@@ -196,13 +253,22 @@ async def ble_session(
                 # real drop can be cleared here.
                 dropped.clear()
                 _watch_drops(client, dropped)
+                clock.came_up()
+                with contextlib.suppress(TypeError):
+                    _LINKS[client] = clock
                 trace.link = probe_link(client, ble_device)
                 if settle_s:
                     await _settle(client, settle_s, dropped)
         assert client is not None  # both branches above set it or raised
         with trace.timed(stages.SESSION):
             handed_off = True
-            yield client
+            try:
+                yield client
+            except asyncio.CancelledError:
+                # How the attempt bound arrives. A link the library itself
+                # gave up on is not one to hand back (see `keep` below).
+                cancelled = True
+                raise
     finally:
         # `keep` transfers ownership only after the context yields the client.
         # A connect/settle failure before that point must not strand a link the
@@ -219,9 +285,20 @@ async def ble_session(
             # connecting BlueZ still answers a placeholder. A drop leaves the
             # last value the backend kept, or none.
             trace.note(mtu=mtu)
-        if client is not None and (not keep or not handed_off):
+        # Before the close, which stamps nothing from here on: a link that went
+        # away by itself says how long it lived (a steady ~30 s is a device
+        # idle timeout, a few seconds a bond or connection-parameter problem).
+        trace.note(**clock.facts())
+        if client is not None and (not keep or not handed_off or cancelled):
+            clock.closing = True
             with trace.timed(stages.DISCONNECT):
-                await _close(client, disconnect_timeout_s, address, trace, "disconnect")
+                closed = await _close(client, disconnect_timeout_s, address, trace, "disconnect")
+            if keep and not closed:
+                # The caller may still hold the handle, and a close that failed
+                # or timed out leaves `is_connected` as it was: mark the link
+                # dead where `still_up()` looks (a reused link keeps its own
+                # event, not this call's).
+                (dropped_event(client) or dropped).set()
 
 
 def _tidy(message: str, address: str) -> str:
@@ -235,12 +312,13 @@ def _tidy(message: str, address: str) -> str:
 
 async def _close(
     client: BleakClient, timeout_s: float, address: str, trace: SessionTrace, fact: str
-) -> None:
+) -> bool:
     """Disconnect under a bound, never raising.
 
     A close that fails must not mask what the session was doing — the work
     was done; only the close failed — but it is worth a `<fact>_error` on
-    the report rather than disappearing (see docs/design.md §3).
+    the report rather than disappearing (see docs/design.md §3). Returns
+    whether the close completed.
     """
     try:
         async with asyncio.timeout(timeout_s):
@@ -248,6 +326,8 @@ async def _close(
     except Exception as exc:  # noqa: BLE001 - never mask the session's error
         _LOGGER.debug("Disconnect from %s failed (ignored): %s", address, exc)
         trace.note(**{f"{fact}_error": error_text(exc)})
+        return False
+    return True
 
 
 async def _settle(client: BleakClient, settle_s: float, dropped: asyncio.Event) -> None:

@@ -5,6 +5,7 @@ import pytest
 from blesession import (
     AttemptTimedOut,
     ConnectFailed,
+    SessionDropped,
     SessionReports,
     SessionTrace,
     Unreachable,
@@ -373,3 +374,113 @@ async def test_a_bound_that_fires_during_the_close_is_read_as_the_close_timing_o
     assert report["failed_stage"] == stages.DISCONNECT
     assert report["likely_cause_key"] == "disconnect.timed_out"
     assert report["timed_out"] is True
+
+
+async def test_a_real_error_followed_by_a_slow_close_is_not_lost(monkeypatch):
+    client = FakeClient()
+    client.disconnect_delay_s = 2
+    monkeypatch.setattr(session_mod, "establish_connection", fake_connect(client))
+
+    async def attempt(a):
+        async with ble_session(FakeDevice(), trace=a.trace):
+            with a.trace.timed("send"):
+                raise SessionDropped("The link dropped during send")
+
+    trace_map = {"send": stages.TRANSFER}
+    result = await run_attempts(attempt, attempt_timeout_s=0.1, max_attempts=1, stage_map=trace_map)
+    assert isinstance(result.error, AttemptTimedOut)
+    report = report_attempt(result, operation="print")
+    assert report["failed_stage"] == stages.TRANSFER
+    assert report["error_before_timeout"] == "The link dropped during send"
+    assert report["timed_out_in"] == stages.DISCONNECT
+
+
+async def test_a_plain_bound_in_the_failed_stage_adds_no_facts():
+    async def attempt(a):
+        with a.trace.timed("send"):
+            await asyncio.sleep(5)
+
+    result = await run_attempts(attempt, attempt_timeout_s=0.05, stage_map={"send": "transfer"})
+    report = report_attempt(result, operation="print")
+    assert "error_before_timeout" not in report and "timed_out_in" not in report
+
+
+def test_the_chain_walk_survives_a_cycle():
+    a, b = RuntimeError("a"), asyncio.CancelledError()
+    a.__context__, b.__context__ = b, a
+    head = TimeoutError()
+    head.__cause__ = b
+    assert attempts_mod._error_before_timeout(head) is a
+    b2 = asyncio.CancelledError()
+    b2.__context__ = b2
+    assert attempts_mod._error_before_timeout(b2) is None
+
+
+async def test_the_wait_for_the_lock_is_recorded_ahead_of_the_other_timings(no_sleep):
+    lock = asyncio.Lock()
+    await lock.acquire()
+    traces = []
+
+    async def attempt(a):
+        traces.append(a.trace)
+        with a.trace.timed("work"):
+            pass
+
+    async def release_later():
+        await asyncio.sleep(0.05)
+        lock.release()
+
+    release = asyncio.get_running_loop().create_task(release_later())
+    result = await run_attempts(attempt, lock=lock)
+    await release
+    assert result.ok
+    timings = result.trace.timings
+    assert list(timings) == ["lock_wait", "work"]
+    assert timings["lock_wait"] >= 0.04
+    assert result.trace.as_dict()["lock_wait_s"] == timings["lock_wait"]
+    report = build_report(operation="poll", trace=result.trace)
+    assert list(report)[-2:] == ["lock_wait_s", "work_s"]
+
+
+async def test_no_lock_means_no_lock_wait(no_sleep):
+    async def attempt(a):
+        return 1
+
+    result = await run_attempts(attempt)
+    assert "lock_wait" not in result.trace.timings
+    assert "lock_wait_s" not in build_report(operation="poll", trace=result.trace)
+
+
+async def test_the_lock_wait_is_never_the_failed_stage(no_sleep):
+    lock = asyncio.Lock()
+
+    async def attempt(a):
+        raise ConnectFailed("nope")
+
+    result = await run_attempts(attempt, lock=lock)
+    assert "lock_wait" in result.trace.timings
+    assert result.trace.failed_stage is None
+    assert result.failed_stage == "connect"  # from the error, not from the wait
+    assert "lock_wait_s" in build_report(operation="poll", trace=result.trace, exc=result.error)
+
+
+async def test_every_attempt_records_its_own_wait(no_sleep):
+    lock = asyncio.Lock()
+    seen = []
+
+    async def attempt(a):
+        seen.append(a.trace.timings["lock_wait"])
+        raise ConnectFailed("nope")
+
+    result = await run_attempts(attempt, lock=lock, max_attempts=2)
+    assert result.number == 2 and len(seen) == 2
+
+
+async def test_a_declined_attempt_still_records_the_wait(no_sleep):
+    lock = asyncio.Lock()
+
+    async def guard():
+        return "locked"
+
+    result = await run_attempts(lambda a: None, lock=lock, guard=guard)
+    assert result.skipped == "locked" and "lock_wait" in result.trace.timings
