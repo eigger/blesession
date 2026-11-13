@@ -15,6 +15,8 @@ so any change to them is at least a minor bump and is listed here.
 
 ### Added
 
+- Dependabot pull requests automatically enter squash auto-merge after required
+  checks, with merged pull request branches deleted by the repository setting.
 - Weekly Dependabot and CI checks, SHA-pinned workflow actions, explicit token
   permissions and job timeouts. Release publishing validates the tag, package
   version and main-branch ancestry. Added private security-reporting guidance.
