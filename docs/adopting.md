@@ -6,6 +6,10 @@ using it. This is the *how*; [`contract.md`](contract.md) is the reference
 [`design.md`](design.md) is the *why*. Read this page, then keep the contract
 open while you write.
 
+For a consistent sensor and diagnostics-download layout, follow the
+[diagnostics implementation guide](diagnostics.md) ([한국어](diagnostics.ko.md)).
+It covers report retention, entity updates, redaction and adoption checks.
+
 ## The split, in one table
 
 | | |
