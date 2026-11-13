@@ -272,10 +272,27 @@ def test_last_seen_is_left_out_without_the_clock(bluetooth, radio_facts, monkeyp
     assert "last_seen_s" not in radio_facts()
 
 
-def test_the_clock_is_the_one_habluetooth_stamps_with():
+def test_the_clock_is_the_one_habluetooth_stamps_with(monkeypatch):
+    """bluetooth_data_tools is habluetooth's dependency, not ours: fake it."""
     import blesession.hass as hass_mod
 
-    assert isinstance(hass_mod._monotonic_now(), float)
+    fake = types.ModuleType("bluetooth_data_tools")
+    fake.monotonic_time_coarse = lambda: 123  # the real one may hand back an int
+    monkeypatch.setitem(sys.modules, "bluetooth_data_tools", fake)
+
+    now = hass_mod._monotonic_now()
+
+    assert now == 123.0 and isinstance(now, float)
+
+
+def test_there_is_no_clock_without_bluetooth_data_tools(bluetooth, radio_facts, monkeypatch):
+    import blesession.hass as hass_mod
+
+    monkeypatch.setitem(sys.modules, "bluetooth_data_tools", None)  # import raises ImportError
+    bluetooth.heard = types.SimpleNamespace(source="office", time=1.0)
+
+    assert hass_mod._monotonic_now() is None
+    assert "last_seen_s" not in radio_facts()  # simply absent, nothing else lost
 
 
 def test_passive_radios_are_counted_beside_the_connectable_ones(bluetooth, radio_facts):
